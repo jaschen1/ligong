@@ -2,7 +2,7 @@ import React, { useState, Suspense, useRef, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { PerspectiveCamera, useProgress, Environment } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
-import { createClient } from '@supabase/supabase-js'; // 导入 Supabase
+import { createClient } from '@supabase/supabase-js'; 
 
 import { TreeState } from './types';
 import { LuxuryTree } from './components/LuxuryTree';
@@ -68,12 +68,6 @@ const IntroLoader = ({ onComplete }: { onComplete: () => void }) => {
   );
 };
 
-// Canvas 内部的加载器占位符
-const CanvasLoader = () => {
-  const { progress } = useProgress();
-  return null;
-};
-
 const App: React.FC = () => {
   // --- 状态管理 ---
   const [treeState, setTreeState] = useState<TreeState>(TreeState.CHAOS);
@@ -107,7 +101,7 @@ const App: React.FC = () => {
 
             if (error) {
                 console.error("Supabase error:", error);
-                throw error; // 抛出错误以便 catch 捕获
+                throw error; 
             }
 
             if (data && data.photo_urls && Array.isArray(data.photo_urls)) {
@@ -119,7 +113,6 @@ const App: React.FC = () => {
             }
         } catch (err) {
             console.error("Failed to load gift:", err);
-            // 可以在这里添加 Toast 提示 "礼赠不存在"
         } finally {
             setIsLoadingGift(false);
         }
@@ -165,23 +158,7 @@ const App: React.FC = () => {
          </div>
       )}
 
-      {/* 4. 手势控制器 */}
-      <HandController 
-        onStateChange={handleStateChangeFromHand}
-        onZoomChange={(z) => {
-            if (!isPhotoFocused) setZoomFactor(z);
-        }}
-        onRotateChange={(v) => {
-          if (!isPhotoFocused) {
-              handRotationVelocity.current = v;
-          } else {
-              handRotationVelocity.current = 0;
-          }
-        }}
-        onPhotoFocusChange={setIsPhotoFocused}
-      />
-
-      {/* 5. 3D 场景 */}
+      {/* 4. 3D 场景 */}
       <div className="absolute inset-0 z-10">
           <Canvas 
             dpr={[1, 1.5]} 
@@ -243,14 +220,30 @@ const App: React.FC = () => {
           </Canvas>
       </div>
 
-      {/* 6. UI 覆盖层 */}
+      {/* 5. UI 覆盖层 (HandController 作为 children 传入) */}
       <Overlay 
         currentState={treeState} 
         onToggle={dummyToggle} 
         onUpload={handleUpload}
         onGenerate={handleGenerate}
         userTextureUrls={userTextureUrls}
-      />
+      >
+        {/* --- 修正：HandController 放在 Overlay 内部 --- */}
+        <HandController 
+          onStateChange={handleStateChangeFromHand}
+          onZoomChange={(z) => {
+              if (!isPhotoFocused) setZoomFactor(z);
+          }}
+          onRotateChange={(v) => {
+            if (!isPhotoFocused) {
+                handRotationVelocity.current = v;
+            } else {
+                handRotationVelocity.current = 0;
+            }
+          }}
+          onPhotoFocusChange={setIsPhotoFocused}
+        />
+      </Overlay>
     </div>
   );
 };

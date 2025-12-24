@@ -12,18 +12,18 @@ interface OverlayProps {
 }
 
 export const Overlay: React.FC<OverlayProps> = ({ 
-  currentState, 
-  onToggle, 
   onUpload, 
   onGenerate, 
-  userTextureUrls = [],
   children 
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null); 
+  
   const [fileCount, setFileCount] = useState(0);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [showInstructions, setShowInstructions] = useState(true);
   const [showGiftGenerator, setShowGiftGenerator] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false); 
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -31,6 +31,27 @@ export const Overlay: React.FC<OverlayProps> = ({
     }, 6000);
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    const playAudio = async () => {
+        if(audioRef.current) {
+            try {
+                audioRef.current.volume = 0.5;
+            } catch (e) { console.log("Autoplay blocked"); }
+        }
+    };
+    playAudio();
+  }, []);
+
+  const toggleMusic = () => {
+      if (!audioRef.current) return;
+      if (isPlaying) {
+          audioRef.current.pause();
+      } else {
+          audioRef.current.play().catch(e => console.error("Play failed:", e));
+      }
+      setIsPlaying(!isPlaying);
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -53,24 +74,50 @@ export const Overlay: React.FC<OverlayProps> = ({
 
   return (
     <>
-      {/* --- 全局 UI 容器 (禁止拦截点击) --- */}
+      <audio 
+        ref={audioRef} 
+        loop 
+        src="https://walabox-assets.oss-cn-beijing.aliyuncs.com/christmas_bgm.mp3" 
+      />
+
+      {/* --- 全局 UI 容器 --- */}
       <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden font-serif">
         
-        {/* --- 1. 左下角：统一控制区 (开启点击) --- */}
+        {/* --- [新增] 右上角：音乐控制区 --- */}
+        <div className="absolute top-6 right-6 md:top-8 md:right-8 pointer-events-auto z-50">
+            <button
+                onClick={toggleMusic}
+                className="w-10 h-10 md:w-12 md:h-12 text-[#FFD700] font-bold text-sm transition-all duration-300 hover:scale-110 active:scale-95 flex justify-center items-center rounded-full"
+                style={{ ...liquidGlassStyle }}
+            >
+                {isPlaying ? '🔊' : '🔇'}
+            </button>
+        </div>
+
+        {/* --- 1. 左下角：统一控制区 --- */}
         <div 
-          className="absolute left-6 bottom-32 md:left-8 md:bottom-44 pointer-events-auto z-50 flex flex-col gap-0.5"
+          className="absolute left-6 bottom-10 md:left-10 md:bottom-12 pointer-events-auto z-50 flex flex-col gap-2"
           style={{ 
-            width: 'min(120px, 42vw)',
+            width: 'min(160px, 42vw)',
             paddingBottom: 'env(safe-area-inset-bottom)' 
           }}
         >
-          {/* [修改说明]:
-             1. 删除了原本的 Control 1 (切换按钮)
-             2. className 中 bottom-24 改为 bottom-32, md:bottom-32 改为 md:bottom-40 (整体上移)
-             3. className 中 gap-3 改为 gap-2 (间距变小)
-          */}
+          {/* 位置 1: 上传按钮 (已修改：全宽，样式与下方按钮一致) */}
+          <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" multiple className="hidden" />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="group relative w-full py-2.5 text-[#FFD700] font-bold text-[10px] md:text-xs tracking-widest uppercase transition-all duration-300 hover:scale-105 active:scale-95 flex justify-center items-center gap-2"
+            style={{ ...liquidGlassStyle, borderRadius: '12px' }}
+          >
+            <span className="relative z-10 drop-shadow-md">
+                {isSubmitted ? `✨ 已添加 ${fileCount} 张` : "📷 上传照片预览"}
+            </span>
+            <div className="absolute inset-0 rounded-[12px] opacity-0 group-hover:opacity-100 transition-opacity duration-700"
+              style={{ background: 'linear-gradient(45deg, transparent, rgba(255,255,255,0.15), transparent)' }}
+            />
+          </button>
 
-          {/* 控件 2: 分享礼赠按钮 */}
+          {/* 位置 2: 分享礼赠按钮 */}
           <button
             onClick={() => setShowGiftGenerator(true)}
             className="group relative w-full py-2.5 text-[#FFD700] font-bold text-[10px] md:text-xs tracking-widest uppercase transition-all duration-300 hover:scale-105 active:scale-95 flex justify-center items-center gap-2"
@@ -82,20 +129,21 @@ export const Overlay: React.FC<OverlayProps> = ({
             />
           </button>
 
-          {/* 控件 3: 上传照片预览按钮 */}
-          <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" multiple className="hidden" />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="w-full py-2.5 text-[#FFD700] font-bold text-[10px] md:text-xs tracking-tight transition-all duration-300 flex flex-col items-center hover:scale-105 active:scale-95"
-            style={{ ...liquidGlassStyle, borderRadius: '12px' }}
+          {/* 位置 3: 手势取景框 (App.tsx 传入的 HandController) */}
+          <div 
+            className="w-full aspect-[4/3] overflow-hidden shadow-2xl relative"
+            style={{ 
+              ...liquidGlassStyle, 
+              borderRadius: '16px', 
+              border: '1px solid rgba(255, 215, 0, 0.2)' 
+            }}
           >
-            <span className="font-serif italic text-center" style={{ fontFamily: '"Playfair Display", serif' }}>
-              {isSubmitted ? `✨ 已添加 ${fileCount} 张` : "上传照片预览"}
-            </span>
-          </button>
+            {children}
+            {!children && <div className="absolute inset-0 flex items-center justify-center bg-black/20 text-[#FFD700]/50 text-[10px]">NO SIGNAL</div>}
+          </div>
         </div>
 
-        {/* --- 2. 右下角：手势指南 (保持独立) --- */}
+        {/* --- 2. 右下角：手势指南 (位置不变) --- */}
         <div 
           className="absolute right-6 bottom-10 md:right-10 md:bottom-12 pointer-events-auto z-40 flex flex-col items-end"
           style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
@@ -119,7 +167,7 @@ export const Overlay: React.FC<OverlayProps> = ({
                 { icon: '✊', label: '握拳', sub: '聚合圣诞树' },
                 { icon: '👐', label: '张手', sub: '扩散圣诞树' },
                 { icon: '👌', label: '捏合', sub: '缩放旋转' },
-                { icon: '☝️', label: '指尖', sub: '选中照片' }
+                { icon: '☝️', label: '弯指', sub: '照片放大/缩小' }
               ].map((item, idx) => (
                 <li key={idx} className="flex items-center gap-3">
                   <span className="text-lg md:text-xl drop-shadow-md">{item.icon}</span>
@@ -158,7 +206,6 @@ export const Overlay: React.FC<OverlayProps> = ({
             <div className="overflow-hidden shadow-2xl" style={{ borderRadius: '28px' }}>
                 <GiftLinkGenerator onSuccess={(id) => {
                   console.log("Gift created:", id);
-                  // setShowGiftGenerator(false); 
                 }} />
             </div>
           </div>
