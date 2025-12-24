@@ -75,7 +75,7 @@ export const Overlay: React.FC<OverlayProps> = ({
       <audio 
         ref={audioRef} 
         loop 
-        src="https://walabox-assets.oss-cn-beijing.aliyuncs.com/bgm.mp3" 
+        src="https://walabox-assets.oss-cn-beijing.aliyuncs.com/music.mp3" 
       />
 
       {/* --- 全局 UI 容器 --- */}

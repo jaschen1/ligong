@@ -293,7 +293,7 @@ export const GiftLinkGenerator: React.FC<Props> = ({ onSuccess }) => {
 
               {/* 底部获取验证码提示 */}
               <div className="text-center">
-                   <a href="https://xhslink.com/m/3DuTYG5OTfi" target="_blank" rel="noopener noreferrer" className="text-[10px] text-rose-200/30 hover:text-rose-200/60 transition-colors tracking-widest italic">
+                   <a href="https://xhslink.com/m/asfnQKWrrc" target="_blank" rel="noopener noreferrer" className="text-[10px] text-rose-200/30 hover:text-rose-200/60 transition-colors tracking-widest italic">
                      没有暗号？点击获取专属验证码
                    </a>
               </div>

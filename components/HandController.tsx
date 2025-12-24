@@ -11,17 +11,17 @@ interface HandControllerProps {
 
 // --- Configuration ---
 const DETECTION_INTERVAL = 25; 
-const GESTURE_CONFIRM_FRAMES = 2; // 降低一点帧数，让点击反应更快
 
-// Physics
+// Interaction Physics
 const ROTATION_SENSITIVITY = 12.0; 
 const INERTIA_DECAY = 0.90;      
 const ZOOM_SENSITIVITY = 6.0;
 
 const OSS_BASE = "https://walabox-assets.oss-cn-beijing.aliyuncs.com/";
 
-type HandMode = 'IDLE' | 'NAVIGATION'; 
-type Pose = 'OPEN' | 'FIST' | 'PINCH' | 'POINTING' | 'UNKNOWN';
+// 状态定义简化：只保留必要的逻辑状态，不再有 "SELECTION_ACTIVE" 这种锁死的状态
+type HandMode = 'IDLE' | 'NAVIGATION' | 'SELECTION_READY'; 
+type Pose = 'OPEN' | 'FIST' | 'PINCH_3_OPEN' | 'POINTING' | 'UNKNOWN';
 
 export const HandController: React.FC<HandControllerProps> = (props) => {
   const { onStateChange, onZoomChange, onRotateChange, onPhotoFocusChange } = props;
@@ -38,19 +38,13 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
 
   // --- Logic State ---
   const currentMode = useRef<HandMode>('IDLE');
-  const gestureFrameCounter = useRef(0);
-  const lastStablePose = useRef<Pose>('UNKNOWN');
+  const previousPose = useRef<Pose>('UNKNOWN');
   
   // Navigation State
   const lastHandCentroid = useRef<{x: number, y: number} | null>(null);
   const lastHandScale = useRef<number | null>(null); 
   const currentRotationVel = useRef(0);
   const currentZoomFactor = useRef(0.5); 
-
-  // 📸 点击逻辑状态
-  // 用于记录上一帧是否是“食指指点”状态，这是点击动作的必经之路
-  const wasPointing = useRef(false); 
-  const isPhotoFocusedLocal = useRef(false);
 
   useEffect(() => {
     let isActive = true;
@@ -60,10 +54,20 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
     const init = async () => {
         try {
             if (!videoRef.current) return;
+            
             stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } }
+                video: { 
+                    facingMode: "user", 
+                    width: { ideal: 640 }, 
+                    height: { ideal: 480 },
+                    frameRate: { ideal: 30 }
+                }
             });
-            if (!isActive) { stream?.getTracks().forEach(t => t.stop()); return; }
+
+            if (!isActive) {
+                stream?.getTracks().forEach(t => t.stop());
+                return;
+            }
 
             videoRef.current.srcObject = stream;
             await new Promise<void>((resolve) => {
@@ -79,7 +83,10 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
             if (!isActive) return;
 
             landmarker = await HandLandmarker.createFromOptions(vision, {
-                baseOptions: { modelAssetPath: OSS_BASE + "hand_landmarker.task", delegate: "GPU" },
+                baseOptions: {
+                    modelAssetPath: OSS_BASE + "hand_landmarker.task",
+                    delegate: "GPU"
+                },
                 runningMode: "VIDEO",
                 numHands: 1, 
                 minHandDetectionConfidence: 0.5,
@@ -91,20 +98,25 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
             setDebugStatus("");
             lastProcessTimeRef.current = performance.now();
             loop();
+
         } catch (err) {
             console.error("Init Error:", err);
             setDebugStatus("Loading Error");
         }
     };
+
     init();
 
     const loop = () => {
         if (!isActive) return;
+        
+        // 惯性处理
         if (currentMode.current !== 'NAVIGATION') {
             currentRotationVel.current *= INERTIA_DECAY;
             if (Math.abs(currentRotationVel.current) < 0.001) currentRotationVel.current = 0;
             propsRef.current.onRotateChange(currentRotationVel.current);
         }
+
         const now = performance.now();
         if (now - lastProcessTimeRef.current >= DETECTION_INTERVAL) {
             if (videoRef.current && videoRef.current.readyState >= 2 && handLandmarkerRef.current) {
@@ -123,19 +135,21 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
     };
   }, []);
 
-  // --- Geometry Helpers ---
+  // --- Geometry Helpers (保持高灵敏度) ---
   const dist = (a: NormalizedLandmark, b: NormalizedLandmark) => Math.hypot(a.x - b.x, a.y - b.y);
 
   const isFingerExtended = (landmarks: NormalizedLandmark[], tipIdx: number, pipIdx: number, wristIdx: number) => {
       const dTip = dist(landmarks[tipIdx], landmarks[wristIdx]);
       const dPip = dist(landmarks[pipIdx], landmarks[wristIdx]);
-      return dTip > dPip * 1.15; 
+      // 保持 1.05 的高灵敏度，容易识别张开
+      return dTip > dPip * 1.05; 
   };
 
   const isFingerCurled = (landmarks: NormalizedLandmark[], tipIdx: number, pipIdx: number, wristIdx: number) => {
       const dTip = dist(landmarks[tipIdx], landmarks[wristIdx]);
       const dPip = dist(landmarks[pipIdx], landmarks[wristIdx]);
-      return dTip < dPip * 1.05; 
+      // 保持 1.3 的高灵敏度，容易识别握拳
+      return dTip < dPip * 1.3; 
   };
 
   const determinePose = (landmarks: NormalizedLandmark[], scale: number): Pose => {
@@ -153,32 +167,27 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
       const ringCurled = isFingerCurled(landmarks, ringTip, ringPIP, wrist);
       const pinkyCurled = isFingerCurled(landmarks, pinkyTip, pinkyPIP, wrist);
 
-      // --- 1. PINCH (Navigation) [最高优先级] ---
-      // 关键修正：只要大拇指和食指捏合，就判定为 PINCH。
-      // 不再强制要求其他三指伸直。这样用户从握拳变为捏合时，即使其他手指还弯着，也会优先识别为捏合，避免误触“张手扩散”。
+      // 1. PINCH (导航) - 优先级最高
       const pinchDist = dist(landmarks[thumbTip], landmarks[indexTip]);
       const isPinch = (pinchDist / scale) < 0.35; 
-      
-      if (isPinch) {
-          return 'PINCH';
+      if (isPinch && midOut && ringOut && pinkyOut) {
+          return 'PINCH_3_OPEN';
       }
 
-      // --- 2. POINTING (食指伸直，其他弯曲) ---
-      // 这是点击的“预备动作”
-      if (indexOut && midCurled && ringCurled && pinkyCurled) {
-          return 'POINTING';
-      }
-
-      // --- 3. FIST (握拳) ---
-      // 聚合树 / 点击的“完成动作”
+      // 2. FIST (点击 或 聚拢)
       if (indexCurled && midCurled && ringCurled && pinkyCurled) {
           return 'FIST'; 
       }
 
-      // --- 4. OPEN (张手) ---
-      // 严格判定：必须四个手指都伸直才算扩散。防止由于误操作触发散开。
+      // 3. OPEN (打散)
       if (indexOut && midOut && ringOut && pinkyOut) {
           return 'OPEN';
+      }
+
+      // 4. POINTING (准备点击/选中) - 恢复这个状态
+      // 食指伸直，其他手指弯曲
+      if (indexOut && midCurled && ringCurled && pinkyCurled) {
+          return 'POINTING';
       }
 
       return 'UNKNOWN';
@@ -223,44 +232,26 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
         return;
     }
 
-    const color = currentMode.current === 'NAVIGATION' ? '#00ffff' : '#00ff44';
+    // HUD 颜色逻辑
+    let color = '#00ff44'; // 默认绿
+    if (currentMode.current === 'NAVIGATION') color = '#00ffff'; // 导航青
+    else if (currentMode.current === 'SELECTION_READY') color = '#ff00ff'; // 准备点击紫
+    
     drawingUtils.drawConnectors(mainHand, HandLandmarker.HAND_CONNECTIONS, { color, lineWidth: 4 });
     drawingUtils.drawLandmarks(mainHand, { color: '#ffffff', lineWidth: 2, radius: 4 });
 
     const pose = determinePose(mainHand, maxScale);
-    processState(pose, mainHand, maxScale, ctx, mainHand); // 传入 mainHand 以便绘制反馈
+    processState(pose, mainHand, maxScale, ctx);
 
-    // 调试信息
-    let statusText = `Mode: ${currentMode.current}`;
-    if (pose === 'POINTING') statusText = "Action: READY (Bend to Click)";
-    if (pose === 'PINCH') statusText = "Action: DRAGGING";
-    drawHUD(ctx, statusText, pose);
+    drawHUD(ctx, `Mode: ${currentMode.current}`, pose);
   };
 
-  const processState = (pose: Pose, landmarks: NormalizedLandmark[], scale: number, ctx: CanvasRenderingContext2D, hand: NormalizedLandmark[]) => {
+  const processState = (pose: Pose, landmarks: NormalizedLandmark[], scale: number, ctx: CanvasRenderingContext2D) => {
     const { onStateChange, onPhotoFocusChange, onRotateChange, onZoomChange } = propsRef.current;
     
-    // --- 去抖动 ---
-    if (pose !== lastStablePose.current) {
-        gestureFrameCounter.current++;
-        if (gestureFrameCounter.current >= GESTURE_CONFIRM_FRAMES) {
-            lastStablePose.current = pose;
-            gestureFrameCounter.current = 0;
-        }
-    } else {
-        gestureFrameCounter.current = 0;
-    }
-
-    // PINCH 拥有最高优先级，绕过去抖动，保证拖拽跟手
-    const activePose = (pose === 'PINCH') ? pose : lastStablePose.current;
-
-    // --- 1. Navigation (Pinch) ---
-    // 解决了“误触发扩散”的问题：只要捏合，立刻进入导航，不再等待张手
-    if (activePose === 'PINCH') {
+    // === 1. 导航模式 (绝对优先，随时打断) ===
+    if (pose === 'PINCH_3_OPEN') {
         currentMode.current = 'NAVIGATION';
-        // 重置点击预备状态，防止误触
-        wasPointing.current = false; 
-
         const pinchX = (landmarks[4].x + landmarks[8].x) / 2;
         const pinchY = (landmarks[4].y + landmarks[8].y) / 2;
         
@@ -282,84 +273,85 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
         }
         lastHandScale.current = scale;
         
-        // 拖拽时暂时不取消照片锁定，看用户需求，如果需要取消可以解开下面注释
-        // if (isPhotoFocusedLocal.current) { ... }
-        return;
-    } else {
-        if (currentMode.current === 'NAVIGATION') {
-            lastHandCentroid.current = null;
-            lastHandScale.current = null; 
-            currentMode.current = 'IDLE';
-        }
-    }
-
-    // --- 2. CLICK LOGIC (Index Bend) ---
-    // 逻辑：只有当上一刻是 POINTING，这一刻变成 FIST，才算点击。
+        // 导航时我们不强制关闭 Focus，允许用户在 Focus 状态下旋转
+        // 除非用户逻辑希望旋转即退出 Focus，这里保持“不屏蔽”原则
+        
+        previousPose.current = pose;
+        return; // 导航期间跳过其他逻辑
+    } 
     
-    if (activePose === 'POINTING') {
-        wasPointing.current = true; // 标记：用户已经伸出食指，准备点击
-        currentMode.current = 'IDLE';
+    // 退出导航逻辑
+    if (currentMode.current === 'NAVIGATION') {
+        lastHandCentroid.current = null;
+        lastHandScale.current = null; 
+        currentMode.current = 'IDLE'; 
+    }
+
+    // === 2. 状态判断 (区分 点击照片 和 聚拢树) ===
+    
+    // 如果之前状态完全一致，跳过处理（防止连续触发）
+    // 但 POINTING 需要持续刷新 Mode
+    if (pose === previousPose.current) {
+        if (pose === 'POINTING') {
+            currentMode.current = 'SELECTION_READY';
+        }
         return;
     }
 
-    if (activePose === 'FIST') {
-        if (wasPointing.current) {
-            // [触发点击]：检测到从“指点”变成了“握拳”
-            // 这是一个明确的弯曲食指动作
-            isPhotoFocusedLocal.current = !isPhotoFocusedLocal.current;
-            onPhotoFocusChange(isPhotoFocusedLocal.current);
-            
-            // 视觉反馈：在指尖画个圈
-            const tip = hand[8];
-            ctx.beginPath();
-            ctx.arc(tip.x * ctx.canvas.width, tip.y * ctx.canvas.height, 20, 0, Math.PI*2);
-            ctx.fillStyle = '#FFD700';
-            ctx.fill();
+    // --- Pose Changed Logic ---
 
-            // 消耗掉这个状态，防止连续触发
-            wasPointing.current = false; 
+    if (pose === 'POINTING') {
+        // 进入“准备点击”状态
+        currentMode.current = 'SELECTION_READY';
+        // 视觉提示：可以在这里加光标，目前只改 Mode
+    } 
+    else if (pose === 'FIST') {
+        // 关键逻辑：判断这个拳头是“点击”还是“聚拢”？
+        
+        if (previousPose.current === 'POINTING' || currentMode.current === 'SELECTION_READY') {
+            // 场景 A: 之前在指，现在握拳 -> 点击 (Select Photo)
+            console.log("Action: CLICK (Select Photo)");
+            onPhotoFocusChange(true);
+            
+            // 触发后立即回到 IDLE，不锁定！
+            // 这样下一帧如果变成 OPEN，就能立刻打散；变成 PINCH 就能立刻旋转
+            currentMode.current = 'IDLE'; 
         } else {
-            // [触发聚合]：直接检测到握拳，且没有之前的指点动作
-            // 这意味着用户就是想聚合树，或者点击动作已经结束
+            // 场景 B: 之前是张开或待机，现在握拳 -> 聚拢 (Form Tree)
+            console.log("Action: GATHER (Form Tree)");
             onStateChange(TreeState.FORMED);
             
-            // 聚合树时，通常我们也希望关闭照片预览
-            if (isPhotoFocusedLocal.current) {
-                isPhotoFocusedLocal.current = false;
-                onPhotoFocusChange(false);
-            }
+            // 聚拢树的时候，通常意味着要退出照片查看
+            onPhotoFocusChange(false);
+            currentMode.current = 'IDLE';
         }
-        currentMode.current = 'IDLE';
-        return;
-    }
-
-    // --- 3. DISPERSE (Open) ---
-    if (activePose === 'OPEN') {
+    } 
+    else if (pose === 'OPEN') {
+        // 张开手 -> 扩散 (Chaos)
+        console.log("Action: SCATTER (Chaos)");
         onStateChange(TreeState.CHAOS);
         
-        wasPointing.current = false; // 重置点击状态
-        
-        // 张手散开时，关闭照片
-        if (isPhotoFocusedLocal.current) {
-            isPhotoFocusedLocal.current = false;
-            onPhotoFocusChange(false);
-        }
+        // 打散粒子肯定要退出照片查看
+        onPhotoFocusChange(false);
         currentMode.current = 'IDLE';
     }
+    else {
+        // UNKNOWN
+        currentMode.current = 'IDLE';
+    }
+    
+    previousPose.current = pose;
   };
 
   const handleHandLost = () => {
-      propsRef.current.onPhotoFocusChange(false);
-      isPhotoFocusedLocal.current = false;
-      wasPointing.current = false;
       currentMode.current = 'IDLE';
       lastHandCentroid.current = null;
       lastHandScale.current = null;
   };
 
   const drawHUD = (ctx: CanvasRenderingContext2D, text: string, subText: string) => {
-      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-      ctx.roundRect(10, 10, 240, 55, 12);
+      ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+      ctx.roundRect(10, 10, 220, 50, 8);
       ctx.fill();
       ctx.fillStyle = "#FFD700";
       ctx.font = "bold 14px 'Courier New'";
@@ -370,9 +362,30 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
   };
 
   return (
-    <div className="hand-tracker-container">
-      <video ref={videoRef} id="webcam-video" autoPlay playsInline muted />
-      <canvas ref={canvasRef} id="webcam-canvas" />
+    // 1. 定位容器：固定在右下角 (bottom-4 right-4)，层级最高 (z-50)，固定大小 (w-64 h-48)
+    <div className="hand-tracker-container fixed bottom-4 right-4 z-50 w-64 h-48 rounded-xl overflow-hidden border-2 border-[#FFD700]/50 shadow-[0_0_20px_rgba(255,215,0,0.3)] bg-black/80 pointer-events-auto">
+      
+      {/* 2. 视频层：充满容器 (absolute inset-0)，镜像翻转 (-scale-x-100) */}
+      <video 
+        ref={videoRef} 
+        id="webcam-video" 
+        autoPlay 
+        playsInline 
+        muted 
+        className="absolute inset-0 w-full h-full object-cover -scale-x-100 opacity-60" 
+      />
+      
+      {/* 3. 绘图层：必须覆盖在视频之上，同样镜像翻转 */}
+      <canvas 
+        ref={canvasRef} 
+        id="webcam-canvas" 
+        className="absolute inset-0 w-full h-full object-cover -scale-x-100" 
+      />
+      
+      {/* 4. 状态标签（可选）：显示当前控制是否激活 */}
+      <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/60 rounded text-[10px] font-mono text-[#FFD700] backdrop-blur-sm border border-[#FFD700]/20">
+        AI VISION
+      </div>
     </div>
   );
 };
