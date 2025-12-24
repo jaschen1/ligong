@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import { FilesetResolver, HandLandmarker, DrawingUtils, NormalizedLandmark } from '@mediapipe/tasks-vision';
 import * as THREE from 'three';
@@ -11,19 +12,15 @@ interface HandControllerProps {
 }
 
 // --- Configuration ---
-const DETECTION_INTERVAL = 25; // 提高检测频率以获得更好的响应速度
+const DETECTION_INTERVAL = 25; // Faster detection for better responsiveness
 
 // Interaction Physics
 const ROTATION_SENSITIVITY = 12.0; 
 const INERTIA_DECAY = 0.90;      
 const ZOOM_SENSITIVITY = 6.0;
 
-// 🟢 阿里云 OSS 资源根目录
-// MediaPipe 会自动在此目录下查找 .js, .wasm, 以及 nosimd 版本文件
-const OSS_BASE = "https://walabox-assets.oss-cn-beijing.aliyuncs.com/";
-
-type HandMode = 'IDLE' | 'NAVIGATION' | 'SELECTION_READY' | 'SELECTION_ACTIVE';
-type Pose = 'OPEN' | 'FIST' | 'PINCH_3_OPEN' | 'POINTING' | 'CLICK_TRIGGERED' | 'UNKNOWN';
+type HandMode = 'IDLE' | 'NAVIGATION' | 'SELECTION';
+type Pose = 'OPEN' | 'FIST' | 'PINCH_3_OPEN' | 'POINTING' | 'UNKNOWN';
 
 export const HandController: React.FC<HandControllerProps> = (props) => {
   const { onStateChange, onZoomChange, onRotateChange, onPhotoFocusChange } = props;
@@ -32,7 +29,7 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [debugStatus, setDebugStatus] = useState<string>('Initializing...');
+  const [error, setError] = useState<string | null>(null);
   
   const requestRef = useRef<number>(0);
   const handLandmarkerRef = useRef<HandLandmarker | null>(null);
@@ -49,9 +46,6 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
   
   // Zoom State
   const currentZoomFactor = useRef(0.5); 
-  
-  // Click Persistence State
-  const clickFrameCounter = useRef(0);
 
   useEffect(() => {
     let isActive = true;
@@ -62,15 +56,25 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
         try {
             if (!videoRef.current) return;
             
-            // 1. 初始化摄像头
-            stream = await navigator.mediaDevices.getUserMedia({
-                video: { 
-                    facingMode: "user", 
-                    width: { ideal: 640 }, 
-                    height: { ideal: 480 },
-                    frameRate: { ideal: 30 }
-                }
-            });
+            // Safety check for mediaDevices
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error("Camera API not available");
+            }
+
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { 
+                        facingMode: "user", 
+                        width: { ideal: 640 }, 
+                        height: { ideal: 480 },
+                        frameRate: { ideal: 30 }
+                    }
+                });
+            } catch (permErr: any) {
+                console.warn("Camera permission denied or unavailable:", permErr);
+                if (isActive) setError("Camera Disabled");
+                return;
+            }
 
             if (!isActive) {
                 stream?.getTracks().forEach(t => t.stop());
@@ -85,21 +89,17 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
             });
 
             if (!isActive) return;
-            await videoRef.current.play();
+            await videoRef.current.play().catch(e => console.warn("Play error", e));
 
-            // 2. 加载 WASM 核心文件 (从阿里云 OSS)
-            // FilesetResolver 会自动检测设备是否支持 SIMD，
-            // 并在 OSS_BASE 目录下自动下载对应的 standard 或 nosimd 文件
             const vision = await FilesetResolver.forVisionTasks(
-                OSS_BASE 
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
             );
             
             if (!isActive) return;
 
-            // 3. 创建 HandLandmarker (加载 hand_landmarker.task 模型)
             landmarker = await HandLandmarker.createFromOptions(vision, {
                 baseOptions: {
-                    modelAssetPath: OSS_BASE + "hand_landmarker.task",
+                    modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
                     delegate: "GPU"
                 },
                 runningMode: "VIDEO",
@@ -110,13 +110,12 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
             });
 
             handLandmarkerRef.current = landmarker;
-            setDebugStatus("");
             lastProcessTimeRef.current = performance.now();
             loop();
 
-        } catch (err) {
+        } catch (err: any) {
             console.error("Init Error:", err);
-            setDebugStatus("Loading Error"); // 简单提示，避免暴露过多技术细节给用户
+            if (isActive) setError("Camera Error");
         }
     };
 
@@ -150,19 +149,20 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
     };
   }, []);
 
-  // --- Geometry Helpers ---
   const dist = (a: NormalizedLandmark, b: NormalizedLandmark) => Math.hypot(a.x - b.x, a.y - b.y);
 
+  // High sensitivity for OPEN (accepts slightly bent fingers)
   const isFingerExtended = (landmarks: NormalizedLandmark[], tipIdx: number, pipIdx: number, wristIdx: number) => {
       const dTip = dist(landmarks[tipIdx], landmarks[wristIdx]);
       const dPip = dist(landmarks[pipIdx], landmarks[wristIdx]);
-      return dTip > dPip * 1.15; 
+      return dTip > dPip * 1.0; 
   };
 
+  // High sensitivity for FIST/CURL (accepts looser curls)
   const isFingerCurled = (landmarks: NormalizedLandmark[], tipIdx: number, pipIdx: number, wristIdx: number) => {
       const dTip = dist(landmarks[tipIdx], landmarks[wristIdx]);
       const dPip = dist(landmarks[pipIdx], landmarks[wristIdx]);
-      return dTip < dPip * 1.05; 
+      return dTip < dPip * 1.25; 
   };
 
   const determinePose = (landmarks: NormalizedLandmark[], scale: number): Pose => {
@@ -180,26 +180,27 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
       const ringCurled = isFingerCurled(landmarks, ringTip, ringPIP, wrist);
       const pinkyCurled = isFingerCurled(landmarks, pinkyTip, pinkyPIP, wrist);
 
-      // 1. PINCH_3_OPEN (Navigation)
+      // 1. PINCH_3_OPEN (Navigation) - Requires specific shape, checked first
       const pinchDist = dist(landmarks[thumbTip], landmarks[indexTip]);
       const isPinch = (pinchDist / scale) < 0.35; 
       if (isPinch && midOut && ringOut && pinkyOut) {
           return 'PINCH_3_OPEN';
       }
 
-      // 2. CLICK DETECTION (Specific to SELECTION_READY state)
+      // 2. POINTING (Selection)
+      // Index extended, others curled. This enables photo selection.
+      if (indexOut && midCurled && ringCurled && pinkyCurled) {
+          return 'POINTING';
+      }
+
+      // 3. FIST (Aggregate)
       if (indexCurled && midCurled && ringCurled && pinkyCurled) {
           return 'FIST'; 
       }
 
-      // 3. OPEN
+      // 4. OPEN (Disperse)
       if (indexOut && midOut && ringOut && pinkyOut) {
           return 'OPEN';
-      }
-
-      // 4. POINTING (Ready for selection)
-      if (indexOut && midCurled && ringCurled && pinkyCurled) {
-          return 'POINTING';
       }
 
       return 'UNKNOWN';
@@ -244,8 +245,8 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
         return;
     }
 
-    const color = currentMode.current === 'SELECTION_ACTIVE' ? '#ff3366' : 
-                  currentMode.current === 'NAVIGATION' ? '#00ffff' : '#00ff44';
+    const color = currentMode.current === 'NAVIGATION' ? '#00ffff' : 
+                  currentMode.current === 'SELECTION' ? '#ff3366' : '#00ff44';
                   
     drawingUtils.drawConnectors(mainHand, HandLandmarker.HAND_CONNECTIONS, { color, lineWidth: 4 });
     drawingUtils.drawLandmarks(mainHand, { color: '#ffffff', lineWidth: 2, radius: 4 });
@@ -259,9 +260,13 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
   const processState = (pose: Pose, landmarks: NormalizedLandmark[], scale: number, ctx: CanvasRenderingContext2D) => {
     const { onStateChange, onPhotoFocusChange, onRotateChange, onZoomChange } = propsRef.current;
     
-    // NAVIGATION
+    // 1. NAVIGATION (Pinch)
     if (pose === 'PINCH_3_OPEN') {
         currentMode.current = 'NAVIGATION';
+        
+        // Navigation active means we are manipulating view, so no photo selection
+        onPhotoFocusChange(false); 
+
         const pinchX = (landmarks[4].x + landmarks[8].x) / 2;
         const pinchY = (landmarks[4].y + landmarks[8].y) / 2;
         if (lastHandCentroid.current) {
@@ -280,68 +285,64 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
             onZoomChange(newZoom);
         }
         lastHandScale.current = scale;
-        onPhotoFocusChange(false);
         previousPose.current = pose;
         return;
-    } else {
-        if (currentMode.current === 'NAVIGATION') {
-            lastHandCentroid.current = null;
-            lastHandScale.current = null; 
-            currentMode.current = 'IDLE';
-        }
-    }
+    } 
 
-    // SELECTION (The sensitive click logic)
+    // 2. SELECTION (Pointing)
     if (pose === 'POINTING') {
-        if (currentMode.current !== 'SELECTION_ACTIVE') {
-            currentMode.current = 'SELECTION_READY';
-            onPhotoFocusChange(false);
-        } else {
-            currentMode.current = 'IDLE';
-            onPhotoFocusChange(false);
-        }
-    } else if (pose === 'FIST') {
-        if (currentMode.current === 'SELECTION_READY' || currentMode.current === 'SELECTION_ACTIVE') {
-            clickFrameCounter.current++;
-            if (clickFrameCounter.current > 1) {
-                currentMode.current = 'SELECTION_ACTIVE';
-                onPhotoFocusChange(true);
-                const tip = landmarks[8];
-                ctx.beginPath();
-                ctx.arc(tip.x * ctx.canvas.width, tip.y * ctx.canvas.height, 20, 0, Math.PI*2);
-                ctx.fillStyle = '#ff3366'; ctx.fill();
-            }
-        } else {
-            if (previousPose.current === 'OPEN') {
-                onStateChange(TreeState.FORMED);
-            }
-            currentMode.current = 'IDLE';
-        }
-    } else if (pose === 'OPEN') {
-        clickFrameCounter.current = 0;
-        if (previousPose.current === 'FIST' && currentMode.current === 'IDLE') {
-            onStateChange(TreeState.CHAOS);
-        }
+        currentMode.current = 'SELECTION';
+        // Enable Photo Focus directly without locking mechanism
+        onPhotoFocusChange(true);
+        
+        lastHandCentroid.current = null;
+        lastHandScale.current = null;
+        previousPose.current = pose;
+        return;
+    }
+    
+    // 3. FIST = AGGREGATE (FORM TREE)
+    if (pose === 'FIST') {
+        onStateChange(TreeState.FORMED);
+        onPhotoFocusChange(false); // Stop selecting if forming
         currentMode.current = 'IDLE';
-        onPhotoFocusChange(false);
-    } else {
-        if (currentMode.current !== 'SELECTION_ACTIVE') {
-            currentMode.current = 'IDLE';
-            clickFrameCounter.current = 0;
-        }
+        
+        lastHandCentroid.current = null;
+        lastHandScale.current = null;
+        previousPose.current = pose;
+        return;
+    } 
+    
+    // 4. OPEN = DISPERSE (CHAOS)
+    if (pose === 'OPEN') {
+        onStateChange(TreeState.CHAOS);
+        onPhotoFocusChange(false); // Stop selecting if dispersing
+        currentMode.current = 'IDLE';
+
+        lastHandCentroid.current = null;
+        lastHandScale.current = null;
+        previousPose.current = pose;
+        return;
     }
 
+    // 5. IDLE/UNKNOWN
+    // If we were selecting but lost the pose, stop selecting (fluidity)
+    if (currentMode.current === 'SELECTION') {
+        onPhotoFocusChange(false);
+    }
+
+    currentMode.current = 'IDLE';
+    lastHandCentroid.current = null;
+    lastHandScale.current = null;
     previousPose.current = pose;
   };
 
   const handleHandLost = () => {
-      if (currentMode.current === 'SELECTION_ACTIVE') {
-          propsRef.current.onPhotoFocusChange(false);
-      }
+      // Release focus if hand is lost
+      propsRef.current.onPhotoFocusChange(false);
       currentMode.current = 'IDLE';
       lastHandCentroid.current = null;
       lastHandScale.current = null;
-      clickFrameCounter.current = 0;
   };
 
   const drawHUD = (ctx: CanvasRenderingContext2D, text: string, subText: string) => {
@@ -356,9 +357,21 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
       ctx.fillText(subText, 20, 48);
   };
 
+  if (error) {
+     return (
+        <div className="hand-tracker-container flex items-center justify-center p-2 text-center bg-black/20 backdrop-blur-sm border-red-500/30">
+            <p className="text-[#FFD700] text-[10px] font-sans leading-tight opacity-80">{error}</p>
+        </div>
+     );
+  }
+
   return (
     // 1. 定位容器：固定在右下角 (bottom-4 right-4)，层级最高 (z-50)，固定大小 (w-64 h-48)
-    <div className="hand-tracker-container fixed bottom-0 right-0 z-50 w-64 h-48 rounded-xl overflow-hidden border-0 border-[#FFD700]/50 shadow-[0_0_20px_rgba(255,215,0,0.3)] bg-black/80 pointer-events-auto">
+    <div className="hand-tracker-container relative w-full h-48 z-50 rounded-xl overflow-hidden border-0 border-[#FFD700]/50 shadow-[0_0_20px_rgba(255,215,0,0.3)] bg-black/80 pointer-events-auto mt-4">
+        {/* 1. relative: 让它回归文档流，听从父级排列。
+            2. w-full: 强制宽度填满父容器（这样就和上面的按钮一样宽了）。
+            3. mt-4: 给上面留点空隙，不要紧贴着按钮。
+        */}
       
       {/* 2. 视频层：充满容器 (absolute inset-0)，镜像翻转 (-scale-x-100) */}
       <video 
