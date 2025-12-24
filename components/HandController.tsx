@@ -1,7 +1,5 @@
-
 import React, { useEffect, useRef, useState } from 'react';
 import { FilesetResolver, HandLandmarker, DrawingUtils, NormalizedLandmark } from '@mediapipe/tasks-vision';
-import * as THREE from 'three';
 import { TreeState } from '../types';
 
 interface HandControllerProps {
@@ -18,6 +16,9 @@ const DETECTION_INTERVAL = 25; // Faster detection for better responsiveness
 const ROTATION_SENSITIVITY = 12.0; 
 const INERTIA_DECAY = 0.90;      
 const ZOOM_SENSITIVITY = 6.0;
+
+// 🟢 阿里云 OSS 资源根目录
+const OSS_BASE = "https://walabox-assets.oss-cn-beijing.aliyuncs.com/";
 
 type HandMode = 'IDLE' | 'NAVIGATION' | 'SELECTION';
 type Pose = 'OPEN' | 'FIST' | 'PINCH_3_OPEN' | 'POINTING' | 'UNKNOWN';
@@ -91,15 +92,16 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
             if (!isActive) return;
             await videoRef.current.play().catch(e => console.warn("Play error", e));
 
-            const vision = await FilesetResolver.forVisionTasks(
-                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
-            );
+            // 🟢 修改 1: 使用 OSS 加载 WASM 核心文件
+            // FilesetResolver 会自动在 OSS_BASE 目录下查找 .js, .wasm, 以及 nosimd 版本文件
+            const vision = await FilesetResolver.forVisionTasks(OSS_BASE);
             
             if (!isActive) return;
 
+            // 🟢 修改 2: 使用 OSS 加载模型文件 (hand_landmarker.task)
             landmarker = await HandLandmarker.createFromOptions(vision, {
                 baseOptions: {
-                    modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+                    modelAssetPath: OSS_BASE + "hand_landmarker.task",
                     delegate: "GPU"
                 },
                 runningMode: "VIDEO",
@@ -366,34 +368,53 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
   }
 
   return (
-    // 1. 定位容器：固定在右下角 (bottom-4 right-4)，层级最高 (z-50)，固定大小 (w-64 h-48)
-    <div className="hand-tracker-container relative w-full h-48 z-50 rounded-xl overflow-hidden border-0 border-[#FFD700]/50 shadow-[0_0_20px_rgba(255,215,0,0.3)] bg-black/80 pointer-events-auto mt-4">
-        {/* 1. relative: 让它回归文档流，听从父级排列。
-            2. w-full: 强制宽度填满父容器（这样就和上面的按钮一样宽了）。
-            3. mt-4: 给上面留点空隙，不要紧贴着按钮。
-        */}
+    // 1. 容器：液态毛玻璃效果核心
+    <div className="hand-tracker-container relative w-full h-48 z-50 mt-4 pointer-events-auto
+      rounded-2xl overflow-hidden
+      /* 核心1：高斯模糊，制造毛玻璃感 */
+      backdrop-blur-xl 
+      /* 核心2：背景渐变，模拟光照在玻璃表面的反射，从左上角微亮到右下角透明 */
+      bg-gradient-to-br from-white/10 via-black/20 to-black/40
+      /* 核心3：边框，极细的金色半透明边框 */
+      border border-[#FFD700]/20
+      /* 核心4：复合阴影。
+         第一层是外部投影让它浮起来；
+         第二层(inset)是内部金色辉光，模拟液态玻璃的厚度和边缘反光 */
+      shadow-[0_10px_30px_rgba(0,0,0,0.5),inset_0_0_20px_rgba(255,215,0,0.05)]
+      /* 交互：鼠标悬停时稍微亮一点 */
+      transition-all duration-500 hover:shadow-[0_10px_30px_rgba(255,215,0,0.1),inset_0_0_20px_rgba(255,215,0,0.1)]
+      ">
       
-      {/* 2. 视频层：充满容器 (absolute inset-0)，镜像翻转 (-scale-x-100) */}
+      {/* 2. 视频层：降低透明度，让背景的毛玻璃质感透出来一些 */}
       <video 
         ref={videoRef} 
         id="webcam-video" 
         autoPlay 
         playsInline 
         muted 
-        className="absolute inset-0 w-full h-full object-cover -scale-x-100 opacity-60" 
+        // opacity-50 配合 mix-blend-mode 可以让视频像投影在玻璃内部一样
+        className="absolute inset-0 w-full h-full object-cover -scale-x-100 opacity-50 mix-blend-screen" 
       />
       
-      {/* 3. 绘图层：必须覆盖在视频之上，同样镜像翻转 */}
+      {/* 3. 绘图层：骨骼点需要清晰 */}
       <canvas 
         ref={canvasRef} 
         id="webcam-canvas" 
-        className="absolute inset-0 w-full h-full object-cover -scale-x-100" 
+        className="absolute inset-0 w-full h-full object-cover -scale-x-100 opacity-90" 
       />
       
-      {/* 4. 状态标签（可选）：显示当前控制是否激活 */}
-      <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/60 rounded text-[10px] font-mono text-[#FFD700] backdrop-blur-sm border border-[#FFD700]/20">
-        AI VISION
+      {/* 4. 状态标签：胶囊风格 */}
+      <div className="absolute top-3 left-3 px-3 py-1 rounded-full 
+        bg-black/40 backdrop-blur-md border border-[#FFD700]/30 
+        flex items-center gap-2 shadow-sm">
+        <div className={`w-1.5 h-1.5 rounded-full ${currentMode.current === 'NAVIGATION' ? 'bg-cyan-400 animate-pulse shadow-[0_0_8px_#22d3ee]' : 'bg-[#FFD700] shadow-[0_0_8px_#FFD700]'}`} />
+        <span className="text-[10px] font-serif tracking-widest text-[#FFD700]/90">
+            {currentMode.current === 'NAVIGATION' ? 'NAV MODE' : 'AI VISION'}
+        </span>
       </div>
+
+      {/* 5. 装饰：底部的光泽条 (增加液态感) */}
+      <div className="absolute bottom-0 left-0 w-full h-1/2 bg-gradient-to-t from-[#FFD700]/5 to-transparent pointer-events-none" />
     </div>
   );
 };
