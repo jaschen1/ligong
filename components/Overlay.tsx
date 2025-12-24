@@ -3,11 +3,8 @@ import { TreeState } from '../types';
 import { GiftLinkGenerator } from './GiftLinkGenerator'; 
 
 interface OverlayProps {
-  currentState: TreeState;
-  onToggle: () => void;
   onUpload: (files: FileList) => void;
   onGenerate: () => void;
-  userTextureUrls?: string[];
   children?: React.ReactNode; 
 }
 
@@ -68,6 +65,7 @@ export const Overlay: React.FC<OverlayProps> = ({
     background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03))',
     backdropFilter: 'blur(16px) saturate(180%)',
     WebkitBackdropFilter: 'blur(16px) saturate(180%)',
+    // 统一边框样式，防止视觉错位
     border: '1px solid rgba(255, 255, 255, 0.2)',
     boxShadow: '0 8px 32px -4px rgba(0, 0, 0, 0.3)',
   };
@@ -77,13 +75,13 @@ export const Overlay: React.FC<OverlayProps> = ({
       <audio 
         ref={audioRef} 
         loop 
-        src="https://walabox-assets.oss-cn-beijing.aliyuncs.com/christmas_bgm.mp3" 
+        src="https://walabox-assets.oss-cn-beijing.aliyuncs.com/bgm.mp3" 
       />
 
       {/* --- 全局 UI 容器 --- */}
       <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden font-serif">
         
-        {/* --- [新增] 右上角：音乐控制区 --- */}
+        {/* --- 右上角：音乐控制区 --- */}
         <div className="absolute top-6 right-6 md:top-8 md:right-8 pointer-events-auto z-50">
             <button
                 onClick={toggleMusic}
@@ -96,21 +94,24 @@ export const Overlay: React.FC<OverlayProps> = ({
 
         {/* --- 1. 左下角：统一控制区 --- */}
         <div 
-          className="absolute left-6 bottom-10 md:left-10 md:bottom-12 pointer-events-auto z-50 flex flex-col gap-2"
+          // [修改点] gap-2 -> gap-0.5 (极紧密间距)
+          className="absolute left-6 bottom-10 md:left-10 md:bottom-12 pointer-events-auto z-50 flex flex-col gap-0.5"
           style={{ 
-            width: 'min(160px, 42vw)',
+            // [修改点] 宽度由 160px -> 128px (减少20%)
+            width: 'min(128px, 34vw)',
             paddingBottom: 'env(safe-area-inset-bottom)' 
           }}
         >
-          {/* 位置 1: 上传按钮 (已修改：全宽，样式与下方按钮一致) */}
+          {/* 位置 1: 上传按钮 */}
           <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" multiple className="hidden" />
           <button
             onClick={() => fileInputRef.current?.click()}
             className="group relative w-full py-2.5 text-[#FFD700] font-bold text-[10px] md:text-xs tracking-widest uppercase transition-all duration-300 hover:scale-105 active:scale-95 flex justify-center items-center gap-2"
-            style={{ ...liquidGlassStyle, borderRadius: '12px' }}
+            // [修改点] 移除底部圆角，改为顶部圆角，因为下面紧贴着另一个按钮
+            style={{ ...liquidGlassStyle, borderRadius: '12px 12px 4px 4px' }}
           >
-            <span className="relative z-10 drop-shadow-md">
-                {isSubmitted ? `✨ 已添加 ${fileCount} 张` : "📷 上传照片预览"}
+            <span className="relative z-10 drop-shadow-md whitespace-nowrap">
+                {isSubmitted ? `✨ ${fileCount}张` : "📷 上传预览"}
             </span>
             <div className="absolute inset-0 rounded-[12px] opacity-0 group-hover:opacity-100 transition-opacity duration-700"
               style={{ background: 'linear-gradient(45deg, transparent, rgba(255,255,255,0.15), transparent)' }}
@@ -121,21 +122,23 @@ export const Overlay: React.FC<OverlayProps> = ({
           <button
             onClick={() => setShowGiftGenerator(true)}
             className="group relative w-full py-2.5 text-[#FFD700] font-bold text-[10px] md:text-xs tracking-widest uppercase transition-all duration-300 hover:scale-105 active:scale-95 flex justify-center items-center gap-2"
-            style={{ ...liquidGlassStyle, borderRadius: '12px' }}
+            // [修改点] 中间按钮，圆角微调以适应紧密布局
+            style={{ ...liquidGlassStyle, borderRadius: '4px' }}
           >
-            <span className="relative z-10 drop-shadow-md">🎁 分享礼赠</span>
-            <div className="absolute inset-0 rounded-[12px] opacity-0 group-hover:opacity-100 transition-opacity duration-700"
+            <span className="relative z-10 drop-shadow-md whitespace-nowrap">🎁 分享礼赠</span>
+            <div className="absolute inset-0 rounded-[4px] opacity-0 group-hover:opacity-100 transition-opacity duration-700"
               style={{ background: 'linear-gradient(45deg, transparent, rgba(255,255,255,0.15), transparent)' }}
             />
           </button>
 
-          {/* 位置 3: 手势取景框 (App.tsx 传入的 HandController) */}
+          {/* 位置 3: 手势取景框 */}
           <div 
             className="w-full aspect-[4/3] overflow-hidden shadow-2xl relative"
             style={{ 
               ...liquidGlassStyle, 
-              borderRadius: '16px', 
-              border: '1px solid rgba(255, 215, 0, 0.2)' 
+              // [修改点] 底部圆角，顶部直角(或小圆角)，并确保边框与上方按钮一致
+              borderRadius: '4px 4px 16px 16px', 
+              // 移除之前可能导致错位的额外边框定义，直接复用 liquidGlassStyle 的 border
             }}
           >
             {children}

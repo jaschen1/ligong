@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FilesetResolver, HandLandmarker, DrawingUtils, NormalizedLandmark } from '@mediapipe/tasks-vision';
-import * as THREE from 'three';
 import { TreeState } from '../types';
 
 interface HandControllerProps {
@@ -12,7 +11,7 @@ interface HandControllerProps {
 
 // --- Configuration ---
 const DETECTION_INTERVAL = 25; 
-const GESTURE_CONFIRM_FRAMES = 3; 
+const GESTURE_CONFIRM_FRAMES = 2; // 降低一点帧数，让点击反应更快
 
 // Physics
 const ROTATION_SENSITIVITY = 12.0; 
@@ -22,8 +21,7 @@ const ZOOM_SENSITIVITY = 6.0;
 const OSS_BASE = "https://walabox-assets.oss-cn-beijing.aliyuncs.com/";
 
 type HandMode = 'IDLE' | 'NAVIGATION'; 
-// 新增 POINTING 状态用于检测点击前摇
-type Pose = 'OPEN' | 'FIST' | 'PINCH_3_OPEN' | 'POINTING' | 'UNKNOWN';
+type Pose = 'OPEN' | 'FIST' | 'PINCH' | 'POINTING' | 'UNKNOWN';
 
 export const HandController: React.FC<HandControllerProps> = (props) => {
   const { onStateChange, onZoomChange, onRotateChange, onPhotoFocusChange } = props;
@@ -49,9 +47,10 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
   const currentRotationVel = useRef(0);
   const currentZoomFactor = useRef(0.5); 
 
-  // 📸 点击/锁定逻辑状态核心
-  const isClickReady = useRef(false); // 是否已“上膛”（检测到了食指伸直）
-  const isPhotoFocusedLocal = useRef(false); // 本地记录当前是否处于放大状态
+  // 📸 点击逻辑状态
+  // 用于记录上一帧是否是“食指指点”状态，这是点击动作的必经之路
+  const wasPointing = useRef(false); 
+  const isPhotoFocusedLocal = useRef(false);
 
   useEffect(() => {
     let isActive = true;
@@ -154,26 +153,30 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
       const ringCurled = isFingerCurled(landmarks, ringTip, ringPIP, wrist);
       const pinkyCurled = isFingerCurled(landmarks, pinkyTip, pinkyPIP, wrist);
 
-      // 1. PINCH (Navigation)
+      // --- 1. PINCH (Navigation) [最高优先级] ---
+      // 关键修正：只要大拇指和食指捏合，就判定为 PINCH。
+      // 不再强制要求其他三指伸直。这样用户从握拳变为捏合时，即使其他手指还弯着，也会优先识别为捏合，避免误触“张手扩散”。
       const pinchDist = dist(landmarks[thumbTip], landmarks[indexTip]);
       const isPinch = (pinchDist / scale) < 0.35; 
-      if (isPinch && midOut && ringOut && pinkyOut) {
-          return 'PINCH_3_OPEN';
+      
+      if (isPinch) {
+          return 'PINCH';
       }
 
-      // 2. POINTING (☝️ 食指伸直，其他卷曲)
-      // 这是点击动作的“前摇”
+      // --- 2. POINTING (食指伸直，其他弯曲) ---
+      // 这是点击的“预备动作”
       if (indexOut && midCurled && ringCurled && pinkyCurled) {
           return 'POINTING';
       }
 
-      // 3. FIST (✊ 握拳)
-      // 既可以是树的聚合，也可以是点击动作的“收尾”
+      // --- 3. FIST (握拳) ---
+      // 聚合树 / 点击的“完成动作”
       if (indexCurled && midCurled && ringCurled && pinkyCurled) {
           return 'FIST'; 
       }
 
-      // 4. OPEN (🖐 张手)
+      // --- 4. OPEN (张手) ---
+      // 严格判定：必须四个手指都伸直才算扩散。防止由于误操作触发散开。
       if (indexOut && midOut && ringOut && pinkyOut) {
           return 'OPEN';
       }
@@ -225,18 +228,19 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
     drawingUtils.drawLandmarks(mainHand, { color: '#ffffff', lineWidth: 2, radius: 4 });
 
     const pose = determinePose(mainHand, maxScale);
-    processState(pose, mainHand, maxScale, ctx);
+    processState(pose, mainHand, maxScale, ctx, mainHand); // 传入 mainHand 以便绘制反馈
 
-    // 动态显示当前状态，方便调试
+    // 调试信息
     let statusText = `Mode: ${currentMode.current}`;
-    if (pose === 'POINTING') statusText = "Mode: READY TO CLICK";
+    if (pose === 'POINTING') statusText = "Action: READY (Bend to Click)";
+    if (pose === 'PINCH') statusText = "Action: DRAGGING";
     drawHUD(ctx, statusText, pose);
   };
 
-  const processState = (pose: Pose, landmarks: NormalizedLandmark[], scale: number, ctx: CanvasRenderingContext2D) => {
+  const processState = (pose: Pose, landmarks: NormalizedLandmark[], scale: number, ctx: CanvasRenderingContext2D, hand: NormalizedLandmark[]) => {
     const { onStateChange, onPhotoFocusChange, onRotateChange, onZoomChange } = propsRef.current;
     
-    // --- 去抖动逻辑 ---
+    // --- 去抖动 ---
     if (pose !== lastStablePose.current) {
         gestureFrameCounter.current++;
         if (gestureFrameCounter.current >= GESTURE_CONFIRM_FRAMES) {
@@ -247,11 +251,16 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
         gestureFrameCounter.current = 0;
     }
 
-    const activePose = (pose === 'PINCH_3_OPEN') ? pose : lastStablePose.current;
+    // PINCH 拥有最高优先级，绕过去抖动，保证拖拽跟手
+    const activePose = (pose === 'PINCH') ? pose : lastStablePose.current;
 
     // --- 1. Navigation (Pinch) ---
-    if (activePose === 'PINCH_3_OPEN') {
+    // 解决了“误触发扩散”的问题：只要捏合，立刻进入导航，不再等待张手
+    if (activePose === 'PINCH') {
         currentMode.current = 'NAVIGATION';
+        // 重置点击预备状态，防止误触
+        wasPointing.current = false; 
+
         const pinchX = (landmarks[4].x + landmarks[8].x) / 2;
         const pinchY = (landmarks[4].y + landmarks[8].y) / 2;
         
@@ -272,11 +281,9 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
             onZoomChange(newZoom);
         }
         lastHandScale.current = scale;
-        // 捏合时取消锁定状态
-        if (isPhotoFocusedLocal.current) {
-             isPhotoFocusedLocal.current = false;
-             onPhotoFocusChange(false);
-        }
+        
+        // 拖拽时暂时不取消照片锁定，看用户需求，如果需要取消可以解开下面注释
+        // if (isPhotoFocusedLocal.current) { ... }
         return;
     } else {
         if (currentMode.current === 'NAVIGATION') {
@@ -286,35 +293,37 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
         }
     }
 
-    // --- 2. CLICK LOGIC (Index Straight -> Bent) ---
+    // --- 2. CLICK LOGIC (Index Bend) ---
+    // 逻辑：只有当上一刻是 POINTING，这一刻变成 FIST，才算点击。
     
     if (activePose === 'POINTING') {
-        // 步骤1：检测到食指伸直，进入“预备点击”状态
-        isClickReady.current = true;
+        wasPointing.current = true; // 标记：用户已经伸出食指，准备点击
         currentMode.current = 'IDLE';
         return;
     }
 
     if (activePose === 'FIST') {
-        if (isClickReady.current) {
-            // 步骤2：检测到握拳，且之前是“预备点击”状态 -> 触发点击
-            // 这是一个点击动作！拦截树的聚合，改为切换照片焦点
-            isPhotoFocusedLocal.current = !isPhotoFocusedLocal.current; // 切换状态
+        if (wasPointing.current) {
+            // [触发点击]：检测到从“指点”变成了“握拳”
+            // 这是一个明确的弯曲食指动作
+            isPhotoFocusedLocal.current = !isPhotoFocusedLocal.current;
             onPhotoFocusChange(isPhotoFocusedLocal.current);
             
-            // 消耗掉这次点击，防止连续触发
-            isClickReady.current = false; 
-            
-            // 可选：绘制一个圆圈提示点击成功
-            const tip = landmarks[8];
+            // 视觉反馈：在指尖画个圈
+            const tip = hand[8];
             ctx.beginPath();
-            ctx.arc(tip.x * ctx.canvas.width, tip.y * ctx.canvas.height, 30, 0, Math.PI*2);
-            ctx.fillStyle = isPhotoFocusedLocal.current ? 'rgba(255, 50, 100, 0.6)' : 'rgba(100, 255, 100, 0.6)';
+            ctx.arc(tip.x * ctx.canvas.width, tip.y * ctx.canvas.height, 20, 0, Math.PI*2);
+            ctx.fillStyle = '#FFD700';
             ctx.fill();
+
+            // 消耗掉这个状态，防止连续触发
+            wasPointing.current = false; 
         } else {
-            // 步骤3：如果是直接握拳（没有预备动作），则执行原本的“聚拢成树”
+            // [触发聚合]：直接检测到握拳，且没有之前的指点动作
+            // 这意味着用户就是想聚合树，或者点击动作已经结束
             onStateChange(TreeState.FORMED);
-            // 确保树聚拢时，照片缩回去
+            
+            // 聚合树时，通常我们也希望关闭照片预览
             if (isPhotoFocusedLocal.current) {
                 isPhotoFocusedLocal.current = false;
                 onPhotoFocusChange(false);
@@ -324,12 +333,13 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
         return;
     }
 
+    // --- 3. DISPERSE (Open) ---
     if (activePose === 'OPEN') {
-        // 重置所有状态
         onStateChange(TreeState.CHAOS);
-        isClickReady.current = false;
         
-        // 张手时也取消照片锁定
+        wasPointing.current = false; // 重置点击状态
+        
+        // 张手散开时，关闭照片
         if (isPhotoFocusedLocal.current) {
             isPhotoFocusedLocal.current = false;
             onPhotoFocusChange(false);
@@ -341,15 +351,15 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
   const handleHandLost = () => {
       propsRef.current.onPhotoFocusChange(false);
       isPhotoFocusedLocal.current = false;
-      isClickReady.current = false;
+      wasPointing.current = false;
       currentMode.current = 'IDLE';
       lastHandCentroid.current = null;
       lastHandScale.current = null;
   };
 
   const drawHUD = (ctx: CanvasRenderingContext2D, text: string, subText: string) => {
-      ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
-      ctx.roundRect(10, 10, 240, 55, 8);
+      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+      ctx.roundRect(10, 10, 240, 55, 12);
       ctx.fill();
       ctx.fillStyle = "#FFD700";
       ctx.font = "bold 14px 'Courier New'";
