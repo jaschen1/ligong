@@ -363,7 +363,7 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
 
   return (
     // 1. 定位容器：固定在右下角 (bottom-4 right-4)，层级最高 (z-50)，固定大小 (w-64 h-48)
-    <div className="hand-tracker-container fixed bottom-4 right-4 z-50 w-64 h-48 rounded-xl overflow-hidden border-2 border-[#FFD700]/50 shadow-[0_0_20px_rgba(255,215,0,0.3)] bg-black/80 pointer-events-auto">
+    <div className="hand-tracker-container fixed bottom-1 right-0 z-50 w-64 h-48 rounded-xl overflow-hidden border-2 border-[#FFD700]/50 shadow-[0_0_20px_rgba(255,215,0,0.3)] bg-black/80 pointer-events-auto">
       
       {/* 2. 视频层：充满容器 (absolute inset-0)，镜像翻转 (-scale-x-100) */}
       <video 
