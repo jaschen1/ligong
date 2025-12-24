@@ -1,0 +1,7 @@
+{
+  "name": "Christmas Tree_Ligong",
+  "description": "A high-fidelity 3D experience featuring a morphing, physics-based interactive Christmas tree with a luxurious emerald and gold aesthetic.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
