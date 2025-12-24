@@ -292,10 +292,15 @@ export const GiftLinkGenerator: React.FC<Props> = ({ onSuccess }) => {
               </div>
 
               {/* 底部获取验证码提示 */}
-              <div className="text-center">
-                   <a href="https://xhslink.com/m/asfnQKWrrc" target="_blank" rel="noopener noreferrer" className="text-[10px] text-rose-200/30 hover:text-rose-200/60 transition-colors tracking-widest italic">
-                     没有暗号？点击获取专属验证码
-                   </a>
+              <div className="text-center mt-6">
+                  <a 
+                    href="https://xhslink.com/m/asfnQKWrrc" 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="inline-block px-4 py-2 rounded-full border border-[#FFD700] text-[#FFD700] text-xs font-bold tracking-widest hover:bg-[#FFD700] hover:text-black transition-all duration-300 shadow-[0_0_10px_rgba(255,215,0,0.2)] hover:shadow-[0_0_20px_rgba(255,215,0,0.6)]"
+                  >
+                    没有兑换码？点击获取专属兑换码
+                  </a>
               </div>
             </div>
           )}
