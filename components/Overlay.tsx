@@ -95,7 +95,7 @@ export const Overlay: React.FC<OverlayProps> = ({
         {/* --- 1. 左下角：统一控制区 --- */}
         <div 
           // [修改点] gap-2 -> gap-0.5 (极紧密间距)
-          className="absolute left-6 bottom-10 md:left-10 md:bottom-12 pointer-events-auto z-50 flex flex-col gap-0.5"
+          className="absolute left-3 bottom-7 md:left-7 md:bottom-9 pointer-events-auto z-50 flex flex-col gap-0.5"
           style={{ 
             // [修改点] 宽度由 160px -> 128px (减少20%)
             width: 'min(128px, 34vw)',

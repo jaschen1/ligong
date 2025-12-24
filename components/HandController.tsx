@@ -368,53 +368,40 @@ export const HandController: React.FC<HandControllerProps> = (props) => {
   }
 
   return (
-    // 1. 容器：液态毛玻璃效果核心
+    // 1. 容器：彻底透明，移除所有装饰性样式 (背景、边框、阴影、模糊)
     <div className="hand-tracker-container relative w-full h-48 z-50 mt-4 pointer-events-auto
+      mr-12
       rounded-2xl overflow-hidden
-      /* 核心1：高斯模糊，制造毛玻璃感 */
-      backdrop-blur-xl 
-      /* 核心2：背景渐变，模拟光照在玻璃表面的反射，从左上角微亮到右下角透明 */
-      bg-gradient-to-br from-white/10 via-black/20 to-black/40
-      /* 核心3：边框，极细的金色半透明边框 */
-      border border-[#FFD700]/20
-      /* 核心4：复合阴影。
-         第一层是外部投影让它浮起来；
-         第二层(inset)是内部金色辉光，模拟液态玻璃的厚度和边缘反光 */
-      shadow-[0_10px_30px_rgba(0,0,0,0.5),inset_0_0_20px_rgba(255,215,0,0.05)]
-      /* 交互：鼠标悬停时稍微亮一点 */
-      transition-all duration-500 hover:shadow-[0_10px_30px_rgba(255,215,0,0.1),inset_0_0_20px_rgba(255,215,0,0.1)]
+      /* 只要保留布局属性，其他视觉属性全删 */
       ">
       
-      {/* 2. 视频层：降低透明度，让背景的毛玻璃质感透出来一些 */}
+      {/* 2. 视频层：调整为“幽灵手”效果 
+          opacity-30: 非常淡，只作为参考
+          mix-blend-screen: 去除摄像头画面的黑色背景，让手看起来悬浮
+      */}
       <video 
         ref={videoRef} 
         id="webcam-video" 
         autoPlay 
         playsInline 
         muted 
-        // opacity-50 配合 mix-blend-mode 可以让视频像投影在玻璃内部一样
-        className="absolute inset-0 w-full h-full object-cover -scale-x-100 opacity-50 mix-blend-screen" 
+        className="absolute inset-0 w-full h-full object-cover -scale-x-100 opacity-30 mix-blend-screen" 
       />
       
-      {/* 3. 绘图层：骨骼点需要清晰 */}
+      {/* 3. 绘图层：保持清晰，这是“只有手势”的主体 */}
       <canvas 
         ref={canvasRef} 
         id="webcam-canvas" 
-        className="absolute inset-0 w-full h-full object-cover -scale-x-100 opacity-90" 
+        className="absolute inset-0 w-full h-full object-cover -scale-x-100" 
       />
       
-      {/* 4. 状态标签：胶囊风格 */}
-      <div className="absolute top-3 left-3 px-3 py-1 rounded-full 
-        bg-black/40 backdrop-blur-md border border-[#FFD700]/30 
-        flex items-center gap-2 shadow-sm">
-        <div className={`w-1.5 h-1.5 rounded-full ${currentMode.current === 'NAVIGATION' ? 'bg-cyan-400 animate-pulse shadow-[0_0_8px_#22d3ee]' : 'bg-[#FFD700] shadow-[0_0_8px_#FFD700]'}`} />
-        <span className="text-[10px] font-serif tracking-widest text-[#FFD700]/90">
-            {currentMode.current === 'NAVIGATION' ? 'NAV MODE' : 'AI VISION'}
+      {/* 4. 状态标签：极简纯文字，去掉胶囊背景 */}
+      <div className="absolute top-2 left-2 flex items-center gap-2 opacity-60 hover:opacity-100 transition-opacity">
+        <div className={`w-1 h-1 rounded-full ${currentMode.current === 'NAVIGATION' ? 'bg-cyan-400 animate-ping' : 'bg-[#FFD700] shadow-[0_0_5px_#FFD700]'}`} />
+        <span className="text-[9px] font-sans tracking-[0.2em] text-[#FFD700] uppercase text-shadow-sm">
+            {currentMode.current === 'NAVIGATION' ? 'NAV' : 'VISION'}
         </span>
       </div>
-
-      {/* 5. 装饰：底部的光泽条 (增加液态感) */}
-      <div className="absolute bottom-0 left-0 w-full h-1/2 bg-gradient-to-t from-[#FFD700]/5 to-transparent pointer-events-none" />
     </div>
   );
 };

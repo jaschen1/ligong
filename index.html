@@ -40,22 +40,32 @@
       }
 
       .hand-tracker-container {
+        /* --- 保留定位和大小 (如果你的组件还需要靠 CSS 定位的话) --- */
         position: absolute;
-        bottom: 57px; /* Reduced from 74px to sit tightly above the upload button at bottom 20px */
+        bottom: 57px; 
         left: 20px;
         width: 12vw;
         max-width: 160px;
         min-width: 140px;
         aspect-ratio: 4/3;
         z-index: 100;
-        pointer-events: none;
+        pointer-events: none; /* 这一行要小心，如果想要点击组件，这里得去掉或改成 auto */
         overflow: hidden;
         border-radius: 12px;
-        background: rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        box-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.4);
+      
+        /* --- 🔴 删除或注释掉下面这些属性 --- */
+        
+        /* background: rgba(255, 255, 255, 0.05);  <-- 这就是那个灰色背景 */
+        /* backdrop-filter: blur(8px);              <-- 这就是模糊效果 */
+        /* -webkit-backdrop-filter: blur(8px); */
+        /* border: 1px solid rgba(255, 255, 255, 0.15); <-- 这就是边框 */
+        /* box-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.4); <-- 这就是阴影 */
+        
+        /* 想要完全透明，加上这个，或者直接删掉上面那些 */
+        background: transparent;
+        border: none;
+        box-shadow: none;
+        backdrop-filter: none;
       }
 
       #webcam-video {
