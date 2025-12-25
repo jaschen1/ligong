@@ -15,7 +15,7 @@ const getFriendlyErrorMessage = (error: any): string => {
 
   // 1. 唯一性冲突 (ID 被占用)
   if (msg.includes('duplicate key') || msg.includes('unique constraint') || msg.includes('id_exists')) {
-    return "哎呀，这个专属 ID 已经被别人抢先使用了，换一个更有创意的吧！";
+    return "哎呀，这个定制的id已经被别人抢先使用了，换一个更有创意的吧！";
   }
 
   // 2. 违反字符格式
