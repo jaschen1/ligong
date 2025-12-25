@@ -9,15 +9,53 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// --- 错误信息翻译官 ---
+const getFriendlyErrorMessage = (error: any): string => {
+  const msg = (error.message || error.toString()).toLowerCase();
+
+  // 1. 唯一性冲突 (ID 被占用)
+  if (msg.includes('duplicate key') || msg.includes('unique constraint') || msg.includes('id_exists')) {
+    return "哎呀，这个专属 ID 已经被别人抢先使用了，换一个更有创意的吧！";
+  }
+
+  // 2. 违反字符格式
+  if (msg.includes('violates check constraint') || msg.includes('validation_failed')) {
+    return "ID 格式不太对哦，只能包含字母、数字、横线(-) 或 下划线(_)";
+  }
+
+  // 3. 网络或连接问题
+  if (msg.includes('network') || msg.includes('failed to fetch') || msg.includes('connection')) {
+    return "网络信号去流浪了，请检查网络后重试";
+  }
+
+  // 4. 超时
+  if (msg.includes('timeout')) {
+    return "上传请求超时，可能是图片太大了，请重试";
+  }
+
+  // 5. RPC 自定义报错 (假设后端抛出 'Invalid Code')
+  if (msg.includes('invalid code') || msg.includes('code_error')) {
+    return "流光暗号似乎不正确，请检查是否输入有误";
+  }
+
+  // 6. 如果已经是中文 (即前端自己 throw 的 Error)，直接返回
+  if (/[\u4e00-\u9fa5]/.test(error.message)) {
+    return error.message;
+  }
+
+  // 7. 兜底未知错误
+  return "生成过程中遇到了一点小插曲，请稍后再试";
+};
+
 interface Props {
   onSuccess?: (id: string) => void;
 }
 
 export const GiftLinkGenerator: React.FC<Props> = ({ onSuccess }) => {
   const [files, setFiles] = useState<File[]>([]);
-  const [giftCode, setGiftCode] = useState(''); // 新增逻辑：礼品码状态
+  const [giftCode, setGiftCode] = useState('');
   const [customId, setCustomId] = useState('');
-  const [status, setStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'checking' | 'uploading' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const [generatedLink, setGeneratedLink] = useState('');
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -50,7 +88,7 @@ export const GiftLinkGenerator: React.FC<Props> = ({ onSuccess }) => {
   };
 
   const generateGift = async () => {
-    // 1. 基础验证
+    // 1. 基础前端验证
     if (!giftCode.trim()) {
       setErrorMessage("请填写专属流光暗号");
       setStatus('error');
@@ -68,17 +106,40 @@ export const GiftLinkGenerator: React.FC<Props> = ({ onSuccess }) => {
       return;
     }
 
-    setStatus('uploading');
-    setUploadProgress(5);
-
     try {
-      // 2. 上传照片到阿里云 OSS
+      // 2.【新增步骤】预校验 ID 是否可用 (为了节省 OSS 流量和用户时间)
+      setStatus('checking'); // 新增一个检查状态
+      
+      // 注意：这里假设你的表名是 'gifts'，请根据实际表名修改
+      // 只要查询有没有这个 ID 即可，不需要查其他数据
+      const { data: existingData, error: checkError } = await supabase
+        .from('gifts') 
+        .select('id')
+        .eq('custom_id', customId) // 假设数据库字段是 custom_id，如果是 id 请修改
+        .maybeSingle();
+
+      if (checkError) throw checkError; // 抛出网络或数据库连接错误
+
+      if (existingData) {
+        // 手动抛出一个包含特定关键词的错误，让翻译官处理
+        throw new Error('id_exists');
+      }
+
+      // 3. ID 可用，开始上传 OSS
+      setStatus('uploading');
+      setUploadProgress(5);
+
       const uploadPromises = files.map(async (originalFile, i) => {
         const compressedFile = await compressImage(originalFile);
         const extension = 'jpg';
         const objectName = `gifts/${customId}/${Date.now()}-${i}.${extension}`;
         const result = await client.put(objectName, compressedFile);
-        setUploadProgress(prev => Math.min(prev + (70 / files.length), 80));
+        
+        setUploadProgress(prev => {
+           // 进度条平滑处理，最多走到 80%，剩下 20% 给数据库写入
+           return Math.min(prev + (75 / files.length), 80);
+        });
+        
         let url = result.url;
         if (url.startsWith('http://')) { url = url.replace('http://', 'https://'); }
         return url; 
@@ -86,7 +147,7 @@ export const GiftLinkGenerator: React.FC<Props> = ({ onSuccess }) => {
 
       const photoUrls = await Promise.all(uploadPromises);
 
-      // 3. 核心逻辑：调用 RPC 函数进行原子化校验与创建
+      // 4. 调用 RPC 写入数据库
       const { data, error: rpcError } = await supabase.rpc('create_gift_with_code', {
         input_code: giftCode.trim().toUpperCase(),
         input_custom_id: customId,
@@ -95,20 +156,28 @@ export const GiftLinkGenerator: React.FC<Props> = ({ onSuccess }) => {
 
       if (rpcError) throw rpcError;
 
-      const result = data[0];
-      if (!result.success) {
-        throw new Error(result.message || "暗号似乎不正确，请检查后重试");
+      const result = data; //有些 supabase 版本返回 data 是对象，有些是数组 data[0]，请根据实际情况调整
+      // 如果 RPC 返回结构是数组: const result = data[0];
+      
+      // 兼容性处理：如果 result 是数组取第一个，如果是对象直接用
+      const resultObj = Array.isArray(result) ? result[0] : result;
+
+      if (resultObj && !resultObj.success) {
+        throw new Error(resultObj.message || "暗号似乎不正确，请检查后重试");
       }
 
-      // 4. 完成流程
+      // 5. 完成
       setUploadProgress(100);
       const link = `${window.location.origin}?id=${customId}`;
       setGeneratedLink(link);
       setStatus('success');
       onSuccess?.(customId);
+
     } catch (err: any) {
-      console.error('Error:', err);
-      setErrorMessage(err.message || '生成失败');
+      console.error('Process Error:', err);
+      // 调用翻译官
+      const friendlyMsg = getFriendlyErrorMessage(err);
+      setErrorMessage(friendlyMsg);
       setStatus('error');
     }
   };
@@ -137,6 +206,8 @@ export const GiftLinkGenerator: React.FC<Props> = ({ onSuccess }) => {
             75% { transform: translateX(4px); }
           }
           .animate-shake { animation: shake 0.4s ease-in-out; }
+          
+          .cursor-wait { cursor: wait; }
         `}
       </style>
 
@@ -150,7 +221,7 @@ export const GiftLinkGenerator: React.FC<Props> = ({ onSuccess }) => {
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-rose-300/50 to-transparent"></div>
 
           {status === 'success' ? (
-            /* --- 成功状态：复用你最爱的浪漫文案 --- */
+            /* --- 成功状态 --- */
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 flex flex-col items-center text-center">
               <div className="mb-6">
                 <span className="text-4xl">💌</span>
@@ -192,21 +263,22 @@ export const GiftLinkGenerator: React.FC<Props> = ({ onSuccess }) => {
               </div>
             </div>
           ) : (
-            /* --- 上传表单：信纸风格 --- */
+            /* --- 上传表单 --- */
             <div className="space-y-8 px-2">
               <div className="text-center space-y-2">
                   <h3 className="text-white text-2xl font-serif-elegant tracking-widest font-bold">定制圣诞礼赠</h3>
                   <p className="text-rose-200/60 text-lg font-handwriting tracking-wide">Igniting memories within the tree.</p>
               </div>
 
-              {/* 1. 礼品码输入 (整合新逻辑，保持旧风格) */}
+              {/* 1. 礼品码输入 */}
               <div className="relative group">
                 <input 
                   type="text"
                   placeholder=" "
                   value={giftCode}
                   onChange={(e) => setGiftCode(e.target.value)}
-                  className="peer w-full bg-transparent border-b border-rose-200/20 text-[#FFD700] px-2 py-3 outline-none focus:border-[#FFD700]/50 transition-all font-serif-elegant placeholder-transparent tracking-[0.2em]"
+                  disabled={status === 'uploading' || status === 'checking'}
+                  className="peer w-full bg-transparent border-b border-rose-200/20 text-[#FFD700] px-2 py-3 outline-none focus:border-[#FFD700]/50 transition-all font-serif-elegant placeholder-transparent tracking-[0.2em] disabled:opacity-50"
                 />
                 <label className="absolute left-2 -top-5 text-[#FFD700]/40 text-xs transition-all peer-placeholder-shown:text-base peer-placeholder-shown:top-2 peer-placeholder-shown:text-rose-200/30 peer-focus:-top-5 peer-focus:text-xs peer-focus:text-[#FFD700]/60 font-handwriting">
                   请输入流光暗号 (礼品兑换码)
@@ -220,10 +292,11 @@ export const GiftLinkGenerator: React.FC<Props> = ({ onSuccess }) => {
                   placeholder=" "
                   value={customId}
                   onChange={(e) => setCustomId(e.target.value.trim())}
-                  className="peer w-full bg-transparent border-b border-rose-200/20 text-rose-50 px-2 py-3 outline-none focus:border-rose-300 transition-all font-serif-elegant placeholder-transparent tracking-wide"
+                  disabled={status === 'uploading' || status === 'checking'}
+                  className="peer w-full bg-transparent border-b border-rose-200/20 text-rose-50 px-2 py-3 outline-none focus:border-rose-300 transition-all font-serif-elegant placeholder-transparent tracking-wide disabled:opacity-50"
                 />
                 <label className="absolute left-2 -top-5 text-rose-200/40 text-xs transition-all peer-placeholder-shown:text-base peer-placeholder-shown:top-2 peer-placeholder-shown:text-rose-200/30 peer-focus:-top-5 peer-focus:text-xs peer-focus:text-rose-300 font-handwriting">
-                  请输入专属 ID (例如：Xyza)
+                  请输入要定制的id (例如：Xyza)
                 </label>
               </div>
 
@@ -238,7 +311,8 @@ export const GiftLinkGenerator: React.FC<Props> = ({ onSuccess }) => {
                         multiple 
                         accept="image/*"
                         onChange={handleFileChange}
-                        className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                        disabled={status === 'uploading' || status === 'checking'}
+                        className="absolute inset-0 opacity-0 cursor-pointer z-10 disabled:cursor-not-allowed"
                     />
                     
                     {files.length > 0 ? (
@@ -259,35 +333,42 @@ export const GiftLinkGenerator: React.FC<Props> = ({ onSuccess }) => {
 
               {/* 4. 按钮与进度 */}
               <div className="pt-2">
-                {status === 'uploading' && (
+                {(status === 'uploading' || status === 'checking') && (
                   <div className="w-full h-1 bg-rose-900/30 mb-4 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-rose-400 to-purple-400 transition-all duration-300 shadow-[0_0_10px_rgba(251,113,133,0.5)]" style={{ width: `${uploadProgress}%` }} />
+                    <div 
+                        className={`h-full bg-gradient-to-r from-rose-400 to-purple-400 transition-all duration-500 shadow-[0_0_10px_rgba(251,113,133,0.5)]`} 
+                        style={{ width: status === 'checking' ? '5%' : `${uploadProgress}%` }} 
+                    />
                   </div>
                 )}
                 
                 <button 
                   onClick={generateGift}
-                  disabled={status === 'uploading'}
+                  disabled={status === 'uploading' || status === 'checking'}
                   className={`
                     w-full py-3.5 rounded-lg text-white font-medium text-sm tracking-[0.2em] transition-all duration-500 font-serif-elegant relative overflow-hidden
-                    ${status === 'uploading' 
+                    ${(status === 'uploading' || status === 'checking')
                         ? 'bg-rose-900/20 cursor-wait' 
                         : 'bg-gradient-to-r from-rose-500/80 to-purple-600/80 hover:from-rose-500 hover:to-purple-600 shadow-[0_4px_20px_rgba(225,29,72,0.3)] hover:shadow-[0_6px_25px_rgba(225,29,72,0.4)] hover:-translate-y-0.5'
                     }
                   `}
                 >
                   {/* 按钮流光动画 */}
-                  {status !== 'uploading' && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent skew-x-[-20deg] animate-shine pointer-events-none"></div>}
+                  {(status !== 'uploading' && status !== 'checking') && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent skew-x-[-20deg] animate-shine pointer-events-none"></div>}
                   
-                  {status === 'uploading' ? (
-                      <span className="animate-pulse">专属定制中...</span>
+                  {status === 'checking' ? (
+                      <span className="animate-pulse">校验 ID 中...</span>
+                  ) : status === 'uploading' ? (
+                      <span className="animate-pulse">美好定制中...</span>
                   ) : (
                       '确认生成'
                   )}
                 </button>
                 
                 {status === 'error' && (
-                  <p className="mt-4 text-red-300 text-xs text-center font-light animate-shake font-handwriting">{errorMessage}</p>
+                  <p className="mt-4 text-red-300 text-xs text-center font-light animate-shake font-handwriting tracking-wide">
+                    {errorMessage}
+                  </p>
                 )}
               </div>
 
