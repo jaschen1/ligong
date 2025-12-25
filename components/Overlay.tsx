@@ -87,7 +87,7 @@ export const Overlay: React.FC<OverlayProps> = ({
                 href="https://xhslink.com/m/8LvIn9fFLUB"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="absolute top-6 left-6 md:top-8 md:left-8 pointer-events-auto z-50 px-5 py-2 rounded-full text-[#FFD700] border border-[#FFD700]/20 font-bold text-[9px] md:text-[10px] tracking-[0.12em] uppercase transition-all duration-300 hover:scale-105 hover:border-[#FFD700]/60 active:scale-95 flex items-center justify-center group"
+                className="absolute top-3 left-3 md:top-4 md:left-4 pointer-events-auto z-50 px-5 py-2 rounded-full text-[#FFD700] border border-[#FFD700]/20 font-bold text-[9px] md:text-[10px] tracking-[0.12em] uppercase transition-all duration-300 hover:scale-105 hover:border-[#FFD700]/60 active:scale-95 flex items-center justify-center group"
                 style={{ 
                     ...liquidGlassStyle,
                     boxShadow: '0 4px 15px rgba(255, 215, 0, 0.1)' // 增加微弱金色光晕
