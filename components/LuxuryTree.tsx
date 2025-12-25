@@ -7,7 +7,7 @@ import { randomPointInSphere } from '../utils/math';
 interface LuxuryTreeProps {
   treeState: TreeState;
   extraRotationVelocity?: React.MutableRefObject<number>;
-  userTextureUrls: string[]; // 这里传入的可能是本地 Blob URL，也可能是 OSS URL
+  userTextureUrls: string[]; // 传入的可能是 blob: 链接，也可能是 https:// 链接
   isPhotoFocused: boolean;
   zoomFactor: number;
 }
@@ -20,7 +20,7 @@ const TREE_RADIUS = 9.0;
 const CHAOS_RADIUS = 18;
 const TREE_TIERS = 9;
 const TREE_TOP_Y = 0.8 * TREE_HEIGHT;
-const MAX_USER_PHOTOS = 15; // 【新增】限制最大上传数量
+const MAX_USER_PHOTOS = 15; // 限制最大照片数量
 
 enum OrnamentType {
   SPHERE = 0,
@@ -269,6 +269,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
   const [loadedTextures, setLoadedTextures] = useState<THREE.Texture[]>([]);
 
   // ---------------- 修改后的纹理加载逻辑 ----------------
+  // 这个 useEffect 能够同时处理：本地blob预览 和 远程OSS链接
   useEffect(() => {
     // 1. 如果没有 URL，清空纹理
     if (!userTextureUrls || userTextureUrls.length === 0) {
@@ -280,7 +281,7 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     const limitedUrls = userTextureUrls.slice(0, MAX_USER_PHOTOS);
 
     const loader = new THREE.TextureLoader();
-    // 关键：允许加载跨域图片
+    // 关键：允许加载跨域图片 (对OSS必须，对本地blob无影响)
     loader.setCrossOrigin('anonymous');
 
     let cancelled = false;
@@ -288,12 +289,22 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
     // 3. 构建加载队列
     const loadPromises = limitedUrls.map((url) => {
       return new Promise<THREE.Texture | null>((resolve) => {
-        // 添加时间戳，强制绕过 CDN 和浏览器缓存，确保获取最新的 CORS 头
-        const separator = url.includes('?') ? '&' : '?';
-        const cacheBustedUrl = `${url}${separator}t=${new Date().getTime()}`;
+        
+        let loadUrl = url;
+        
+        // 【关键判断】：区分本地预览和远程分享
+        // 如果是本地 Blob (预览模式)，千万不能加 ?t=...，否则会破坏 Blob 链接
+        const isLocalPreview = url.startsWith('blob:');
 
+        if (!isLocalPreview) {
+          // 如果是远程链接 (分享模式)，为了解决 CORS 缓存问题，我们追加时间戳
+          const separator = url.includes('?') ? '&' : '?';
+          loadUrl = `${url}${separator}t=${new Date().getTime()}`;
+        }
+
+        // 开始加载
         loader.load(
-          cacheBustedUrl,
+          loadUrl,
           (tex) => {
             tex.colorSpace = THREE.SRGBColorSpace;
             tex.minFilter = THREE.LinearMipMapLinearFilter;
@@ -303,8 +314,8 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
           },
           undefined,
           (err) => {
-            console.warn(`[Texture Error] Failed to load: ${url}`, err);
-            // 失败时 resolve null，避免 Promise.all 整体失败
+            // 如果是 404，通常意味着传入的 url 只是文件名而不是完整链接
+            console.warn(`[Texture Error] Failed to load: ${loadUrl}`, err);
             resolve(null);
           }
         );
@@ -316,14 +327,14 @@ export const LuxuryTree: React.FC<LuxuryTreeProps> = ({ treeState, extraRotation
       if (cancelled) return;
       // 过滤掉 null
       const successfulTextures = results.filter((tex): tex is THREE.Texture => tex !== null);
-      console.log(`Loaded ${successfulTextures.length} / ${limitedUrls.length} images.`);
+      if (successfulTextures.length > 0) {
+        console.log(`Loaded ${successfulTextures.length} / ${limitedUrls.length} images.`);
+      }
       setLoadedTextures(successfulTextures);
     });
 
     return () => {
       cancelled = true;
-      // 可选：如果需要更严格的内存管理，可在这里 dispose，但注意 React 双重渲染
-      // loadedTextures.forEach(t => t.dispose()); 
     };
   }, [userTextureUrls]);
 
