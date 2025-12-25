@@ -267,7 +267,7 @@ export const GiftLinkGenerator: React.FC<Props> = ({ onSuccess }) => {
             <div className="space-y-8 px-2">
               <div className="text-center space-y-2">
                   <h3 className="text-white text-2xl font-serif-elegant tracking-widest font-bold">定制圣诞礼赠</h3>
-                  <p className="text-rose-200/60 text-lg font-handwriting tracking-wide">纯享版：去除水印，专属链接即点击用>cp>
+                  <p className="text-rose-200/60 text-lg font-handwriting tracking-wide">纯享版：去除水印，专属链接即点击用</p>
               </div>
 
               {/* 1. 礼品码输入 */}
