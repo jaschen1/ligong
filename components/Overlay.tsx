@@ -1,17 +1,18 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { TreeState } from '../types';
 import { GiftLinkGenerator } from './GiftLinkGenerator'; 
 
 interface OverlayProps {
   onUpload: (files: FileList) => void;
   onGenerate: () => void;
   children?: React.ReactNode; 
+  isGiftMode?: boolean;
 }
 
 export const Overlay: React.FC<OverlayProps> = ({ 
   onUpload, 
   onGenerate, 
-  children 
+  children,
+  isGiftMode = false
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null); 
@@ -65,7 +66,6 @@ export const Overlay: React.FC<OverlayProps> = ({
     background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03))',
     backdropFilter: 'blur(16px) saturate(180%)',
     WebkitBackdropFilter: 'blur(16px) saturate(180%)',
-    // 统一边框样式，防止视觉错位
     border: '1px solid rgba(255, 255, 255, 0.2)',
     boxShadow: '0 8px 32px -4px rgba(0, 0, 0, 0.3)',
   };
@@ -81,6 +81,29 @@ export const Overlay: React.FC<OverlayProps> = ({
       {/* --- 全局 UI 容器 --- */}
       <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden font-serif">
         
+        {/* --- 左上角：版权信息 (醒目优化版) --- */}
+        {!isGiftMode && (
+            <a
+                href="https://xhslink.com/m/8LvIn9fFLUB"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="absolute top-6 left-6 md:top-8 md:left-8 pointer-events-auto z-50 px-5 py-2 rounded-full text-[#FFD700] border border-[#FFD700]/20 font-bold text-[9px] md:text-[10px] tracking-[0.12em] uppercase transition-all duration-300 hover:scale-105 hover:border-[#FFD700]/60 active:scale-95 flex items-center justify-center group"
+                style={{ 
+                    ...liquidGlassStyle,
+                    boxShadow: '0 4px 15px rgba(255, 215, 0, 0.1)' // 增加微弱金色光晕
+                }}
+            >
+                <div className="flex items-center gap-1.5 transition-opacity duration-300">
+                    <span className="opacity-60 font-medium">Design by</span>
+                    <span className="text-white group-hover:text-[#FFD700] transition-colors duration-300">
+                        小红书 @文弱李工
+                    </span>
+                    {/* 右侧小装饰箭头 */}
+                    <span className="ml-0.5 opacity-40 group-hover:translate-x-0.5 transition-transform text-[8px]">→</span>
+                </div>
+            </a>
+        )}
+
         {/* --- 右上角：音乐控制区 --- */}
         <div className="absolute top-6 right-6 md:top-8 md:right-8 pointer-events-auto z-50">
             <button
@@ -94,51 +117,46 @@ export const Overlay: React.FC<OverlayProps> = ({
 
         {/* --- 1. 左下角：统一控制区 --- */}
         <div 
-          // [修改点] gap-2 -> gap-0.5 (极紧密间距)
           className="absolute left-3 bottom-7 md:left-7 md:bottom-9 pointer-events-auto z-50 flex flex-col gap-0.5"
           style={{ 
-            // [修改点] 宽度由 160px -> 128px (减少20%)
             width: 'min(128px, 34vw)',
             paddingBottom: 'env(safe-area-inset-bottom)' 
           }}
         >
-          {/* 位置 1: 上传按钮 */}
-          <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" multiple className="hidden" />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="group relative w-full py-2.5 text-[#FFD700] font-bold text-[10px] md:text-xs tracking-widest uppercase transition-all duration-300 hover:scale-105 active:scale-95 flex justify-center items-center gap-2"
-            // [修改点] 移除底部圆角，改为顶部圆角，因为下面紧贴着另一个按钮
-            style={{ ...liquidGlassStyle, borderRadius: '12px 12px 4px 4px' }}
-          >
-            <span className="relative z-10 drop-shadow-md whitespace-nowrap">
-                {isSubmitted ? `✨ ${fileCount}张` : "📷 上传预览"}
-            </span>
-            <div className="absolute inset-0 rounded-[12px] opacity-0 group-hover:opacity-100 transition-opacity duration-700"
-              style={{ background: 'linear-gradient(45deg, transparent, rgba(255,255,255,0.15), transparent)' }}
-            />
-          </button>
+          {!isGiftMode && (
+              <>
+                  <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" multiple className="hidden" />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="group relative w-full py-2.5 text-[#FFD700] font-bold text-[10px] md:text-xs tracking-widest uppercase transition-all duration-300 hover:scale-105 active:scale-95 flex justify-center items-center gap-2"
+                    style={{ ...liquidGlassStyle, borderRadius: '12px 12px 4px 4px' }}
+                  >
+                    <span className="relative z-10 drop-shadow-md whitespace-nowrap">
+                        {isSubmitted ? `✨ ${fileCount}张` : "📷 上传预览"}
+                    </span>
+                    <div className="absolute inset-0 rounded-[12px] opacity-0 group-hover:opacity-100 transition-opacity duration-700"
+                      style={{ background: 'linear-gradient(45deg, transparent, rgba(255,255,255,0.15), transparent)' }}
+                    />
+                  </button>
 
-          {/* 位置 2: 分享礼赠按钮 */}
-          <button
-            onClick={() => setShowGiftGenerator(true)}
-            className="group relative w-full py-2.5 text-[#FFD700] font-bold text-[10px] md:text-xs tracking-widest uppercase transition-all duration-300 hover:scale-105 active:scale-95 flex justify-center items-center gap-2"
-            // [修改点] 中间按钮，圆角微调以适应紧密布局
-            style={{ ...liquidGlassStyle, borderRadius: '4px' }}
-          >
-            <span className="relative z-10 drop-shadow-md whitespace-nowrap">🎁 分享礼赠</span>
-            <div className="absolute inset-0 rounded-[4px] opacity-0 group-hover:opacity-100 transition-opacity duration-700"
-              style={{ background: 'linear-gradient(45deg, transparent, rgba(255,255,255,0.15), transparent)' }}
-            />
-          </button>
+                  <button
+                    onClick={() => setShowGiftGenerator(true)}
+                    className="group relative w-full py-2.5 text-[#FFD700] font-bold text-[10px] md:text-xs tracking-widest uppercase transition-all duration-300 hover:scale-105 active:scale-95 flex justify-center items-center gap-2"
+                    style={{ ...liquidGlassStyle, borderRadius: '4px' }}
+                  >
+                    <span className="relative z-10 drop-shadow-md whitespace-nowrap">🎁 分享礼赠</span>
+                    <div className="absolute inset-0 rounded-[4px] opacity-0 group-hover:opacity-100 transition-opacity duration-700"
+                      style={{ background: 'linear-gradient(45deg, transparent, rgba(255,255,255,0.15), transparent)' }}
+                    />
+                  </button>
+              </>
+          )}
 
-          {/* 位置 3: 手势取景框 */}
           <div 
             className="w-full aspect-[4/3] overflow-hidden shadow-2xl relative"
             style={{ 
               ...liquidGlassStyle, 
-              // [修改点] 底部圆角，顶部直角(或小圆角)，并确保边框与上方按钮一致
-              borderRadius: '4px 4px 16px 16px', 
-              // 移除之前可能导致错位的额外边框定义，直接复用 liquidGlassStyle 的 border
+              borderRadius: isGiftMode ? '16px' : '4px 4px 16px 16px', 
             }}
           >
             {children}
@@ -146,7 +164,7 @@ export const Overlay: React.FC<OverlayProps> = ({
           </div>
         </div>
 
-        {/* --- 2. 右下角：手势指南 (位置不变) --- */}
+        {/* --- 2. 右下角：手势指南 --- */}
         <div 
           className="absolute right-6 bottom-10 md:right-10 md:bottom-12 pointer-events-auto z-40 flex flex-col items-end"
           style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}

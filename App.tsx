@@ -77,6 +77,9 @@ const App: React.FC = () => {
   const [isLoadingGift, setIsLoadingGift] = useState(false);
   const [showIntro, setShowIntro] = useState(true);
   
+  // [新增] 礼赠模式状态：如果为 true，隐藏所有编辑/分享控件
+  const [isGiftMode, setIsGiftMode] = useState(false);
+  
   const handRotationVelocity = useRef(0);
 
   // --- 核心：直接使用 Supabase 加载礼赠 ---
@@ -88,6 +91,8 @@ const App: React.FC = () => {
 
         if (!giftId) return;
 
+        // [新增] 检测到 ID，开启礼赠模式
+        setIsGiftMode(true);
         setIsLoadingGift(true);
         console.log("Detect Gift ID:", giftId);
 
@@ -220,15 +225,12 @@ const App: React.FC = () => {
           </Canvas>
       </div>
 
-      {/* 5. UI 覆盖层 (HandController 作为 children 传入) */}
+      {/* 5. UI 覆盖层 */}
       <Overlay 
-        currentState={treeState} 
-        onToggle={dummyToggle} 
         onUpload={handleUpload}
         onGenerate={handleGenerate}
-        userTextureUrls={userTextureUrls}
+        isGiftMode={isGiftMode} // [新增] 将模式状态传给 Overlay
       >
-        {/* --- 修正：HandController 放在 Overlay 内部 --- */}
         <HandController 
           onStateChange={handleStateChangeFromHand}
           onZoomChange={(z) => {
