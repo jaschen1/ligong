@@ -170,7 +170,7 @@ export const Overlay: React.FC<OverlayProps> = ({
                 { icon: '✊', label: '握拳', sub: '聚合圣诞树' },
                 { icon: '👐', label: '张手', sub: '扩散圣诞树' },
                 { icon: '👌', label: '捏合', sub: '缩放旋转' },
-                { icon: '☝️', label: '弯指', sub: '照片放大/缩小' }
+                { icon: '☝️', label: '食指伸直', sub: '选中照片' }
               ].map((item, idx) => (
                 <li key={idx} className="flex items-center gap-3">
                   <span className="text-lg md:text-xl drop-shadow-md">{item.icon}</span>
